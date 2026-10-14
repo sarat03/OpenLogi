@@ -30,7 +30,7 @@ use futures::StreamExt as _;
 use openlogi_agent_core::event_monitor::EventMonitor;
 use openlogi_agent_core::observable::ObservableState;
 use openlogi_agent_core::orchestrator::{Orchestrator, SharedHandles};
-use openlogi_agent_core::runtime::hook;
+use openlogi_agent_core::runtime::{RingTrigger, hook};
 use openlogi_agent_core::watchers::foreground_app::ForegroundUpdate;
 use openlogi_agent_core::watchers::inventory::{InventoryEvent, InventoryRefresh};
 use openlogi_core::config::Config;
@@ -39,6 +39,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 #[cfg(target_os = "macos")]
+use openlogi_hid::HapticWaveform;
 use openlogi_ipc::ClientKind;
 
 use self::transition::{Replacement, WatcherFleet};
@@ -316,9 +317,12 @@ impl Armed {
                 Some(event) = watchers.next() => {
                     running.apply_watcher(event, &inventory_refresh).await;
                 }
-                Some(device_key) = running.inputs.triggers.recv() => {
-                    running.begin_action_ring(device_key.as_deref()).await;
-                }
+                Some(trigger) = running.inputs.triggers.recv() => match trigger {
+                    RingTrigger::Pressed(device_key) => {
+                        running.begin_action_ring(device_key.as_deref()).await;
+                    }
+                    RingTrigger::Released => running.release_action_ring(),
+                },
                 else => break,
             }
         }
@@ -440,6 +444,20 @@ impl Running {
             self.inputs
                 .dispatcher
                 .cancel_pointer_buttons_except(current);
+        }
+    }
+
+    /// The ring trigger came up: execute the highlighted item, if any.
+    fn release_action_ring(&self) {
+        if let Some(activation) = self.inputs.ring.release() {
+            self.inputs
+                .dispatcher
+                .dispatch(&activation.action, Some(&activation.device_key));
+            self.ring_haptics.play(
+                activation.haptic_route,
+                HapticWaveform::DampStateChange,
+                "activation",
+            );
         }
     }
 

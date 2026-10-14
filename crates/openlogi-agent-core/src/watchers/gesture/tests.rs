@@ -790,3 +790,59 @@ async fn a_zoom_rotate_hold_streams_zoom_and_ends_on_release() {
     scroll.shutdown();
     actions.shutdown();
 }
+
+#[tokio::test]
+async fn releasing_the_ring_trigger_reports_the_release() {
+    use crate::runtime::RingTrigger;
+    use crate::runtime::scroll::{ScrollPreferences, ScrollRuntime};
+
+    let (_signal, device_io) = openlogi_hid::device_io_channel();
+    let (ring, mut ring_rx) = mpsc::unbounded_channel();
+    let device_access = DeviceAccess {
+        channel: CaptureChannelSlot::default(),
+        registry: openlogi_hid::ChannelRegistry::default(),
+        receiver_access: ReceiverAccess::default(),
+        device_io,
+    };
+    let mut actions =
+        crate::runtime::ActionRuntime::new(Arc::default(), device_access, ring).unwrap();
+    let mut scroll = ScrollRuntime::spawn(Arc::new(ScrollPreferences::new(
+        false,
+        VerticalScrollSensitivity::default(),
+    )))
+    .unwrap();
+    let mut dispatcher = InputDispatcher::new(GestureOutputs::new(
+        actions.dispatcher(),
+        scroll.input(),
+        Arc::default(),
+    ));
+
+    let mut trigger = plan();
+    trigger.dispatch.bindings.insert(
+        ButtonId::DpiToggle,
+        Binding::Single(Action::ShowActionsRing),
+    );
+    let session = live_session_from_plan(7, trigger);
+    let id = session.id().clone();
+    dispatcher.dispatch(
+        &id,
+        session.dispatch(),
+        CapturedInput::ButtonDown(ButtonId::DpiToggle),
+    );
+    dispatcher.dispatch(
+        &id,
+        session.dispatch(),
+        CapturedInput::ButtonUp(ButtonId::DpiToggle),
+    );
+
+    let pressed = tokio::time::timeout(Duration::from_secs(5), ring_rx.recv()).await;
+    assert!(
+        matches!(pressed, Ok(Some(RingTrigger::Pressed(_)))),
+        "{pressed:?}"
+    );
+    let released = tokio::time::timeout(Duration::from_secs(5), ring_rx.recv()).await;
+    assert_eq!(released.ok().flatten(), Some(RingTrigger::Released));
+
+    scroll.shutdown();
+    actions.shutdown();
+}

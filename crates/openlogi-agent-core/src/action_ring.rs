@@ -269,6 +269,20 @@ impl ActionRingManager {
             .ok_or(ActionRingCommandError::SessionNotFound)
     }
 
+    /// The ring trigger was released: like Options+, execute the highlighted
+    /// action and close the ring. With nothing (or a folder) highlighted — a
+    /// quick tap leaves the pointer in the centre — the ring stays open for a
+    /// click.
+    pub fn release(&self) -> Option<ActionRingActivation> {
+        let mut state = self.state();
+        state.expire();
+        let target = state.active.as_ref()?.hovered?;
+        if !state.active.as_ref()?.actions.contains_key(&target) {
+            return None;
+        }
+        self.take_activation(&mut state, target)
+    }
+
     fn take_activation(
         &self,
         state: &mut State,
@@ -375,6 +389,48 @@ mod tests {
             .activate(invocation.session_id, child)
             .expect("a folder's item executes");
         assert_eq!(activation.action, Action::PlayPause);
+    }
+
+    #[test]
+    fn release_executes_the_hovered_action_and_closes_the_ring() {
+        let manager = ActionRingManager::default();
+        let invocation = manager.begin(spec());
+        assert!(
+            manager.release().is_none(),
+            "nothing hovered: the ring stays open"
+        );
+        assert!(
+            manager.dismiss_active(),
+            "still showing after an empty release"
+        );
+
+        let invocation_again = manager.begin(spec());
+        assert_ne!(invocation.session_id, invocation_again.session_id);
+        manager
+            .hover(invocation_again.session_id, TOP)
+            .expect("hover a populated slot");
+        let activation = manager
+            .release()
+            .expect("release selects the hovered action");
+        assert_eq!(activation.action, Action::Cut);
+        assert!(
+            !manager.dismiss_active(),
+            "the release consumed the session"
+        );
+    }
+
+    #[test]
+    fn releasing_on_a_folder_keeps_the_ring_open() {
+        let manager = ActionRingManager::default();
+        let invocation = manager.begin(spec_with_media_folder());
+        manager
+            .hover(
+                invocation.session_id,
+                ActionRingTarget::root(ActionRingSlot::Right),
+            )
+            .expect("folders are hoverable");
+        assert!(manager.release().is_none());
+        assert!(manager.dismiss_active());
     }
 
     fn spec() -> ActionRingSessionSpec {

@@ -81,7 +81,17 @@ impl HeldShortcuts {
 struct ActionExecutor {
     dpi_cycle: Arc<RwLock<DpiCycles>>,
     access: DeviceAccess,
-    action_ring: tokio::sync::mpsc::UnboundedSender<Option<String>>,
+    action_ring: tokio::sync::mpsc::UnboundedSender<RingTrigger>,
+}
+
+/// One Actions Ring trigger edge for the agent's ring runtime.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RingTrigger {
+    /// A `ShowActionsRing` press from the device with this config key (or the
+    /// current device): open the ring, or close it when already showing.
+    Pressed(Option<String>),
+    /// That press was released: select the highlighted item, Options+-style.
+    Released,
 }
 
 impl ActionExecutor {
@@ -97,7 +107,7 @@ impl ActionExecutor {
         if matches!(action, Action::ShowActionsRing) {
             if self
                 .action_ring
-                .send(device_key.map(str::to_owned))
+                .send(RingTrigger::Pressed(device_key.map(str::to_owned)))
                 .is_err()
             {
                 warn!("Actions Ring runtime unavailable — trigger ignored");
@@ -183,6 +193,9 @@ impl ActionExecutor {
 struct ButtonEventHandler {
     executor: ActionExecutor,
     held: HeldShortcuts,
+    /// Presses that opened (or toggled) the Actions Ring, so their release
+    /// can select the highlighted item.
+    ring_presses: Vec<PressToken>,
 }
 
 impl ButtonEventHandler {
@@ -190,6 +203,7 @@ impl ButtonEventHandler {
         Self {
             executor,
             held: HeldShortcuts::default(),
+            ring_presses: Vec::new(),
         }
     }
 
@@ -205,6 +219,18 @@ impl ButtonEventHandler {
             }
             ButtonRuntimeEvent::Ended { press, reason } => {
                 self.held.end(press.token());
+                if let Some(index) = self.ring_presses.iter().position(|p| p == press.token()) {
+                    self.ring_presses.swap_remove(index);
+                    if matches!(reason, EndReason::Released)
+                        && self
+                            .executor
+                            .action_ring
+                            .send(RingTrigger::Released)
+                            .is_err()
+                    {
+                        warn!("Actions Ring runtime unavailable — release ignored");
+                    }
+                }
                 if let EndReason::Canceled(reason) = reason {
                     match press.control() {
                         PressControl::Button(button) => {
@@ -228,6 +254,9 @@ impl ButtonEventHandler {
     ) {
         if action.held_combo().is_some() && target.resolve(action).is_none() {
             return;
+        }
+        if matches!(action, Action::ShowActionsRing) {
+            self.ring_presses.push(press.clone());
         }
         if !self.held.start(press, action) {
             self.executor.dispatch_to(action, device_key, target);
@@ -257,7 +286,7 @@ impl ActionRuntime {
     pub fn new(
         dpi_cycle: Arc<RwLock<DpiCycles>>,
         access: DeviceAccess,
-        action_ring: tokio::sync::mpsc::UnboundedSender<Option<String>>,
+        action_ring: tokio::sync::mpsc::UnboundedSender<RingTrigger>,
     ) -> io::Result<Self> {
         let executor = ActionExecutor {
             dpi_cycle,
