@@ -66,10 +66,9 @@ fn a_still_held_second_source_takes_over_when_the_holder_releases() {
         "the released holder still clicks"
     );
 
-    acc.backdate_hold_for_test();
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         BOTH,
         &[],
         &[],
@@ -100,11 +99,10 @@ fn raw_xy_during_a_two_source_overlap_is_dropped_not_misattributed() {
     let mut acc = CaptureAccum::default();
 
     handle_reprog(&mut acc, press(), BOTH, &[], &[], &tx);
-    acc.backdate_hold_for_test();
     handle_reprog(&mut acc, both_press(), BOTH, &[], &[], &tx);
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         BOTH,
         &[],
         &[],
@@ -117,10 +115,9 @@ fn raw_xy_during_a_two_source_overlap_is_dropped_not_misattributed() {
 
     // The panel lifts; the surviving hold accumulates again.
     handle_reprog(&mut acc, press(), BOTH, &[], &[], &tx);
-    acc.backdate_hold_for_test();
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         BOTH,
         &[],
         &[],
@@ -155,7 +152,6 @@ fn a_same_report_swap_to_the_panel_still_discards_its_contact_jump() {
         "the swapped-out holder still clicks"
     );
 
-    acc.backdate_hold_for_test();
     // The contact jump — leftward, far past every threshold — must be dropped.
     handle_reprog(
         &mut acc,
@@ -171,7 +167,7 @@ fn a_same_report_swap_to_the_panel_still_discards_its_contact_jump() {
     );
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         BOTH,
         &[],
         &[],
@@ -187,14 +183,14 @@ fn a_same_report_swap_to_the_panel_still_discards_its_contact_jump() {
 }
 
 #[test]
-fn quick_tap_is_a_click_even_while_the_cursor_moves() {
+fn a_tap_whose_cursor_drifts_less_than_the_start_threshold_is_a_click() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut acc = CaptureAccum::default();
 
     handle_reprog(&mut acc, press(), GESTURE, &[], &[], &tx);
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 40, dy: 5 },
         GESTURE,
         &[],
         &[],
@@ -222,10 +218,9 @@ fn a_held_gesture_commits_a_swipe_and_does_not_also_click() {
 
     handle_reprog(&mut acc, press(), GESTURE, &[], &[], &tx);
     // Pretend the button has been held well past the swipe gate.
-    acc.backdate_hold_for_test();
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         GESTURE,
         &[],
         &[],
@@ -256,7 +251,6 @@ fn the_haptic_panel_gestures_when_diverted_for_gestures() {
     let mut acc = CaptureAccum::default();
 
     handle_reprog(&mut acc, panel_press(), PANEL, &[], &[], &tx);
-    acc.backdate_hold_for_test();
     // The panel's contact jump, discarded before the accumulator sees it.
     handle_reprog(
         &mut acc,
@@ -269,7 +263,7 @@ fn the_haptic_panel_gestures_when_diverted_for_gestures() {
     // The real swipe that follows.
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 5, dy: -120 },
+        RawControlEvent::RawXy { dx: 5, dy: -260 },
         PANEL,
         &[],
         &[],
@@ -321,7 +315,6 @@ fn the_panels_first_raw_xy_sample_after_contact_is_discarded() {
     let mut acc = CaptureAccum::default();
 
     handle_reprog(&mut acc, panel_press(), PANEL, &[], &[], &tx);
-    acc.backdate_hold_for_test();
     // The contact jump — leftward, far past every threshold.
     handle_reprog(
         &mut acc,
@@ -339,7 +332,7 @@ fn the_panels_first_raw_xy_sample_after_contact_is_discarded() {
     // summed, this rightward travel could never commit Right.
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         PANEL,
         &[],
         &[],
@@ -362,10 +355,9 @@ fn the_dedicated_buttons_first_sample_is_not_discarded() {
     let mut acc = CaptureAccum::default();
 
     handle_reprog(&mut acc, press(), GESTURE, &[], &[], &tx);
-    acc.backdate_hold_for_test();
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         GESTURE,
         &[],
         &[],
@@ -391,10 +383,9 @@ fn an_undiverted_gesture_source_does_not_gesture() {
     let mut acc = CaptureAccum::default();
 
     handle_reprog(&mut acc, press(), PANEL, &[], &[], &tx);
-    acc.backdate_hold_for_test();
     handle_reprog(
         &mut acc,
-        RawControlEvent::RawXy { dx: 120, dy: 5 },
+        RawControlEvent::RawXy { dx: 260, dy: 5 },
         PANEL,
         &[],
         &[],
@@ -523,9 +514,8 @@ fn a_side_gesture_button_uses_its_hidpp_raw_xy() {
     let down = RawControlEvent::DivertedButtons([cid, 0, 0, 0]);
 
     acc.on_event(down, &[], &[], &buttons, &[], &tx);
-    acc.backdate_hold_for_test();
     acc.on_event(
-        RawControlEvent::RawXy { dx: -120, dy: 5 },
+        RawControlEvent::RawXy { dx: -260, dy: 5 },
         &[],
         &[],
         &buttons,
@@ -593,9 +583,8 @@ fn a_dpi_gesture_button_uses_the_shared_raw_xy_path() {
     let down = RawControlEvent::DivertedButtons([cid, 0, 0, 0]);
 
     acc.on_event(down, &[], &[], &buttons, &[], &tx);
-    acc.backdate_hold_for_test();
     acc.on_event(
-        RawControlEvent::RawXy { dx: 5, dy: -120 },
+        RawControlEvent::RawXy { dx: 5, dy: -260 },
         &[],
         &[],
         &buttons,

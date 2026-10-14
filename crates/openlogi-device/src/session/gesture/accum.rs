@@ -66,17 +66,6 @@ pub(super) struct CaptureAccum {
     buttons_down: Vec<u16>,
 }
 
-#[cfg(test)]
-impl CaptureAccum {
-    /// Test-only seam mirroring [`SwipeAccumulator::backdate_hold_for_test`]
-    /// for the current hold. A no-op while idle.
-    pub(super) fn backdate_hold_for_test(&mut self) {
-        if let HoldState::Holding { swipe, .. } = &mut self.hold {
-            swipe.backdate_hold_for_test();
-        }
-    }
-}
-
 /// The [`ButtonId`] a gesture-source CID dispatches as, per
 /// [`GESTURE_SOURCE_BUTTONS`]; `None` for a CID that is not a gesture source.
 /// A spec listing an unknown CID therefore never begins a hold — the press is
@@ -241,9 +230,8 @@ impl CaptureAccum {
             *skip_first_raw_xy = false;
             return;
         }
-        // Commit the instant a clean direction emerges (mid-swipe, repeatable per hold);
-        // the accumulator gates on hold duration internally and drops travel that
-        // arrives outside a hold.
+        // Fire each time travel crosses the action threshold (mid-swipe,
+        // repeatable per hold); the accumulator drops travel outside a hold.
         if let Some(direction) = swipe.accumulate(i32::from(dx), i32::from(dy)) {
             debug!(?direction, %button, "gesture committed");
             let _ = sink.send(CapturedInput::Gesture(*button, direction));

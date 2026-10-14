@@ -66,7 +66,6 @@ fn accumulate_tags_a_committed_swipe_with_the_held_press() {
     let mut hold = HoldState::default();
     let press = token(1, ButtonId::Back);
     hold.begin(ButtonId::Back, press.clone());
-    hold.swipe.backdate_hold_for_test();
 
     assert_eq!(
         hold.accumulate(GESTURE_SWIPE_THRESHOLD + 10, 0),
@@ -96,7 +95,6 @@ fn a_same_button_repress_restarts_the_stale_hold() {
         "a same-button re-press is proof of a lost release"
     );
     hold.begin(ButtonId::Back, replacement.clone());
-    hold.swipe.backdate_hold_for_test();
     assert_eq!(
         hold.accumulate(GESTURE_SWIPE_THRESHOLD + 10, 0),
         Some((replacement, ButtonId::Back, GestureDirection::Right))
@@ -115,7 +113,6 @@ fn an_aged_hold_yields_to_a_new_buttons_press() {
     };
     assert_eq!(stale, token(1, ButtonId::Back));
     hold.begin(ButtonId::Forward, replacement.clone());
-    hold.swipe.backdate_hold_for_test();
     assert_eq!(
         hold.accumulate(GESTURE_SWIPE_THRESHOLD + 10, 0),
         Some((replacement, ButtonId::Forward, GestureDirection::Right))
@@ -127,7 +124,6 @@ fn begin_is_first_wins_while_a_hold_is_active() {
     let mut hold = HoldState::default();
     let first = token(1, ButtonId::Back);
     hold.begin(ButtonId::Back, first.clone());
-    hold.swipe.backdate_hold_for_test();
     assert!(
         matches!(hold.prepare_begin(ButtonId::Forward), HoldAdmission::Refuse),
         "a second press must not hijack the active hold"
