@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use openlogi_core::app::ForegroundApp;
-use openlogi_core::binding::{ActionRingIcon, ActionRingSlot};
+use openlogi_core::binding::{ActionRingIcon, ActionRingSlot, ActionRingTarget};
 use openlogi_core::config::Lighting;
 use openlogi_core::device::{DeviceInventory, StandaloneDevice};
 use openlogi_core::hid::{
@@ -69,7 +69,11 @@ pub use succession::Identity;
 /// v34: `KeyCombo` gains the Super modifier bit (`Super`, `Win`, `Meta`).
 /// v35: `Action::GestureZoom`, `Action::GestureRotate` and `Action::SmartZoom`
 ///      appended.
-pub const PROTOCOL_VERSION: u32 = 35;
+/// v36: Actions Ring folders: `ActionRingPresentation::children`,
+///      `ActionRingCommandError::NotAnAction`,
+///      `Agent::action_ring_hover_target` and `Agent::action_ring_activate_target`
+///      appended.
+pub const PROTOCOL_VERSION: u32 = 36;
 
 /// Environment variable through which the agent hands a supervised helper the
 /// run token it will serve, so the helper knows which agent it belongs to
@@ -387,6 +391,9 @@ pub struct ActionRingPresentation {
     pub literal: bool,
     /// Fully resolved icon; the overlay does not need the executable action.
     pub icon: ActionRingIcon,
+    /// A folder's items, keyed by their position inside it; empty for an
+    /// action.
+    pub children: BTreeMap<ActionRingSlot, ActionRingPresentation>,
 }
 
 /// One request for the overlay helper to display an Actions Ring.
@@ -425,6 +432,8 @@ pub enum ActionRingCommandError {
     SessionNotFound,
     /// The selected position has no action.
     SlotEmpty,
+    /// The selected position is a folder, which opens rather than executes.
+    NotAnAction,
 }
 
 /// What kind of client a connection is, declared through
@@ -585,4 +594,15 @@ pub trait Agent {
     /// receiver, and with [`PairingFailure::ReceiverNotFound`] for a route
     /// that names no receiver slot or a receiver that is not connected.
     async fn unpair_device(route: DeviceRoute) -> Result<(), PairingFailure>;
+    /// Report the highlighted ring item — a root position or an item inside
+    /// an expanded folder — for haptics and release-to-select.
+    async fn action_ring_hover_target(
+        session_id: u64,
+        target: ActionRingTarget,
+    ) -> Result<(), ActionRingCommandError>;
+    /// Execute the snapshotted action at `target` and consume the session.
+    async fn action_ring_activate_target(
+        session_id: u64,
+        target: ActionRingTarget,
+    ) -> Result<(), ActionRingCommandError>;
 }

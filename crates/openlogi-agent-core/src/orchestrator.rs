@@ -889,7 +889,7 @@ impl Orchestrator {
             return None;
         }
         let layout = ring.effective_layout(self.current_app.as_deref());
-        if layout.slots.is_empty() {
+        if layout.populated().is_empty() {
             return None;
         }
         let haptic_route = (device.online

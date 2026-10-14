@@ -31,7 +31,7 @@ use std::fmt::Write;
 
 use bincode::Options;
 use openlogi_core::app::ForegroundApp;
-use openlogi_core::binding::{ActionRingIcon, ActionRingSlot, KeyCombo};
+use openlogi_core::binding::{ActionRingIcon, ActionRingSlot, ActionRingTarget, KeyCombo};
 use openlogi_core::config::{Lighting, ScrollResolution};
 use openlogi_core::device::{
     BatteryInfo, BatteryLevel, BatteryStatus, Capabilities, DeviceInventory, DeviceKind,
@@ -102,7 +102,7 @@ fn representative_smartshift_status() -> SmartShiftStatus {
 /// that makes that visible in the same diff.
 #[test]
 fn protocol_version_is_pinned() {
-    assert_eq!(PROTOCOL_VERSION, 35);
+    assert_eq!(PROTOCOL_VERSION, 36);
 }
 
 #[test]
@@ -288,21 +288,29 @@ fn action_ring_types() {
                     label: "Cut".to_string(),
                     literal: false,
                     icon: ActionRingIcon::Keyboard,
+                    children: BTreeMap::new(),
                 },
             )]),
             language: Some("fr".to_string()),
         },
-        "2a010003437574000701026672",
+        "2a01000343757400070001026672",
     );
-    // The literal flag is one byte between label and icon.
+    // The literal flag is one byte between label and icon; a folder's
+    // children trail as a map (empty for an action).
     assert_wire(
         &ActionRingPresentation {
             label: "Cut".to_string(),
             literal: true,
             icon: ActionRingIcon::Keyboard,
+            children: BTreeMap::new(),
         },
-        "034375740107",
+        "03437574010700",
     );
+    assert_wire(
+        &ActionRingTarget::child(ActionRingSlot::Top, ActionRingSlot::Right),
+        "000102",
+    );
+    assert_wire(&ActionRingTarget::root(ActionRingSlot::Left), "0600");
     assert_wire(&ActionRingSlot::Top, "00");
     assert_wire(&ActionRingSlot::TopLeft, "07");
     assert_wire(&ActionRingIcon::Keyboard, "07");
@@ -315,6 +323,7 @@ fn action_ring_types() {
     );
     assert_wire(&ActionRingCommandError::SessionNotFound, "00");
     assert_wire(&ActionRingCommandError::SlotEmpty, "01");
+    assert_wire(&ActionRingCommandError::NotAnAction, "02");
     assert_wire(&HidppOperation::WriteFnLock, "0c");
     assert_wire(&HidppOperation::PlayHaptic, "0e");
     assert_wire(&HidppOperation::ReadFnLock, "0f");

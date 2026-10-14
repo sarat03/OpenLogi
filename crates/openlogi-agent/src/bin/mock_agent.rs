@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 use futures::StreamExt as _;
 use interprocess::local_socket::traits::tokio::Listener as _;
 use openlogi_core::app::ForegroundApp;
-use openlogi_core::binding::ActionRingSlot;
+use openlogi_core::binding::{ActionRingSlot, ActionRingTarget};
 use openlogi_core::config::{Config, Lighting};
 use openlogi_core::device::{
     BatteryInfo, BatteryLevel, BatteryStatus, Capabilities, DeviceInventory, DeviceKind,
@@ -779,6 +779,24 @@ impl Agent for MockAgent {
     }
 
     async fn action_ring_cancel(self, _: Context, _session_id: u64) {}
+
+    async fn action_ring_hover_target(
+        self,
+        _: Context,
+        _session_id: u64,
+        _target: ActionRingTarget,
+    ) -> Result<(), ActionRingCommandError> {
+        Err(ActionRingCommandError::SessionNotFound)
+    }
+
+    async fn action_ring_activate_target(
+        self,
+        _: Context,
+        _session_id: u64,
+        _target: ActionRingTarget,
+    ) -> Result<(), ActionRingCommandError> {
+        Err(ActionRingCommandError::SessionNotFound)
+    }
 
     async fn set_dpi(self, _: Context, route: DeviceRoute, dpi: Dpi) -> Result<(), WriteError> {
         let mut state = self.state.lock().await;

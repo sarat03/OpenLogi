@@ -14,7 +14,7 @@ use openlogi_agent_core::event_monitor::SharedEventMonitor;
 use openlogi_agent_core::observable::ObservableState;
 use openlogi_agent_core::orchestrator::{Orchestrator, SharedHandles};
 use openlogi_agent_core::runtime::ActionDispatcher;
-use openlogi_core::binding::ActionRingSlot;
+use openlogi_core::binding::{ActionRingSlot, ActionRingTarget};
 use openlogi_core::config::{Config, Lighting};
 use openlogi_core::device::DeviceInventory;
 use openlogi_hid::{
@@ -334,11 +334,21 @@ impl Agent for AgentServer {
 
     async fn action_ring_hover(
         self,
-        _: Context,
+        context: Context,
         session_id: u64,
         slot: ActionRingSlot,
     ) -> Result<(), ActionRingCommandError> {
-        if let Some(hover) = self.action_ring.hover(session_id, slot)? {
+        self.action_ring_hover_target(context, session_id, ActionRingTarget::root(slot))
+            .await
+    }
+
+    async fn action_ring_hover_target(
+        self,
+        _: Context,
+        session_id: u64,
+        target: ActionRingTarget,
+    ) -> Result<(), ActionRingCommandError> {
+        if let Some(hover) = self.action_ring.hover(session_id, target)? {
             self.ring_haptics
                 .play(hover.haptic_route, HapticWaveform::SubtleCollision, "hover");
         }
@@ -347,11 +357,21 @@ impl Agent for AgentServer {
 
     async fn action_ring_activate(
         self,
-        _: Context,
+        context: Context,
         session_id: u64,
         slot: ActionRingSlot,
     ) -> Result<(), ActionRingCommandError> {
-        let activation = self.action_ring.activate(session_id, slot)?;
+        self.action_ring_activate_target(context, session_id, ActionRingTarget::root(slot))
+            .await
+    }
+
+    async fn action_ring_activate_target(
+        self,
+        _: Context,
+        session_id: u64,
+        target: ActionRingTarget,
+    ) -> Result<(), ActionRingCommandError> {
+        let activation = self.action_ring.activate(session_id, target)?;
         self.dispatcher
             .dispatch(&activation.action, Some(&activation.device_key));
         self.ring_haptics.play(

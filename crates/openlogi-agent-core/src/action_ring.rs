@@ -10,7 +10,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use openlogi_core::action_ring::DISPLAY_LIFETIME;
-use openlogi_core::binding::{Action, ActionRingIcon, ActionRingLayout, ActionRingSlot};
+use openlogi_core::binding::{
+    Action, ActionRingEntry, ActionRingIcon, ActionRingLayout, ActionRingSlot, ActionRingTarget,
+};
 use openlogi_hid::DeviceRoute;
 use openlogi_ipc::{
     ActionRingCommandError, ActionRingInvocation, ActionRingPresentation, Generation, OBSERVE_HOLD,
@@ -64,8 +66,10 @@ struct Session {
     invocation: ActionRingInvocation,
     device_key: String,
     haptic_route: Option<DeviceRoute>,
-    actions: BTreeMap<ActionRingSlot, Action>,
-    hovered: Option<ActionRingSlot>,
+    actions: BTreeMap<ActionRingTarget, Action>,
+    /// Root positions holding a folder: selectable for hover, never executed.
+    folders: Vec<ActionRingSlot>,
+    hovered: Option<ActionRingTarget>,
     opened_at: Instant,
 }
 
@@ -126,18 +130,29 @@ impl ActionRingManager {
         let session_id = self.next_session.fetch_add(1, Ordering::Relaxed);
         let mut actions = BTreeMap::new();
         let mut slots = BTreeMap::new();
-        for (slot, entry) in spec.layout.slots {
-            let (action, custom_icon, custom_label) = entry.into_parts();
-            let literal = custom_label.is_some();
+        let folders: Vec<ActionRingSlot> = spec.layout.folders().keys().copied().collect();
+        for (slot, folder) in spec.layout.folders().clone() {
+            let mut children = BTreeMap::new();
+            for (child, entry) in folder.items {
+                let (presentation, action) = leaf(entry);
+                children.insert(child, presentation);
+                actions.insert(ActionRingTarget::child(slot, child), action);
+            }
+            let literal = folder.label.is_some();
             slots.insert(
                 slot,
                 ActionRingPresentation {
-                    label: custom_label.unwrap_or_else(|| action.label()),
+                    label: folder.label.unwrap_or_else(|| FOLDER_LABEL.to_owned()),
                     literal,
-                    icon: custom_icon.unwrap_or_else(|| ActionRingIcon::for_action(&action)),
+                    icon: folder.icon.unwrap_or(FOLDER_ICON),
+                    children,
                 },
             );
-            actions.insert(slot, action);
+        }
+        for (slot, entry) in spec.layout.slots {
+            let (presentation, action) = leaf(entry);
+            slots.insert(slot, presentation);
+            actions.insert(ActionRingTarget::root(slot), action);
         }
         let invocation = ActionRingInvocation {
             session_id,
@@ -150,6 +165,7 @@ impl ActionRingManager {
             device_key: spec.device_key,
             haptic_route: spec.haptic_route,
             actions,
+            folders,
             hovered: None,
             opened_at: Instant::now(),
         });
@@ -169,7 +185,7 @@ impl ActionRingManager {
     pub fn dismiss_active(&self) -> bool {
         let mut state = self.state();
         state.expire();
-        let dismissed = matches!(&state.active, Some(session) if !session.actions.is_empty());
+        let dismissed = state.active.is_some();
         if dismissed {
             state.active = None;
         }
@@ -206,12 +222,12 @@ impl ActionRingManager {
         });
     }
 
-    /// Record a changed highlighted slot. Repeated hover reports are ignored so
+    /// Record a changed highlighted item. Repeated hover reports are ignored so
     /// one stationary pointer cannot flood the HID++ haptic queue.
     pub fn hover(
         &self,
         session_id: u64,
-        slot: ActionRingSlot,
+        target: ActionRingTarget,
     ) -> Result<Option<ActionRingHover>, ActionRingCommandError> {
         let mut state = self.state();
         // `active_session` expires a stale session, which the overlay must hear
@@ -223,40 +239,45 @@ impl ActionRingManager {
                 return Err(error);
             }
         };
-        if !session.actions.contains_key(&slot) {
+        if !session.actions.contains_key(&target) && !session.is_folder(target) {
             return Err(ActionRingCommandError::SlotEmpty);
         }
-        if session.hovered == Some(slot) {
+        if session.hovered == Some(target) {
             return Ok(None);
         }
-        session.hovered = Some(slot);
+        session.hovered = Some(target);
         Ok(Some(ActionRingHover {
             haptic_route: session.haptic_route.clone(),
         }))
     }
 
-    /// Consume a session and return the snapshotted action for `slot`.
+    /// Consume a session and return the snapshotted action at `target`.
     pub fn activate(
         &self,
         session_id: u64,
-        slot: ActionRingSlot,
+        target: ActionRingTarget,
     ) -> Result<ActionRingActivation, ActionRingCommandError> {
         let mut state = self.state();
-        if !state
-            .active_session(session_id)?
-            .actions
-            .contains_key(&slot)
-        {
+        let session = state.active_session(session_id)?;
+        if session.is_folder(target) {
+            return Err(ActionRingCommandError::NotAnAction);
+        }
+        if !session.actions.contains_key(&target) {
             return Err(ActionRingCommandError::SlotEmpty);
         }
-        let Some(mut session) = state.active.take() else {
-            return Err(ActionRingCommandError::SessionNotFound);
-        };
-        self.publish(&state);
-        let Some(action) = session.actions.remove(&slot) else {
-            return Err(ActionRingCommandError::SlotEmpty);
-        };
-        Ok(ActionRingActivation {
+        self.take_activation(&mut state, target)
+            .ok_or(ActionRingCommandError::SessionNotFound)
+    }
+
+    fn take_activation(
+        &self,
+        state: &mut State,
+        target: ActionRingTarget,
+    ) -> Option<ActionRingActivation> {
+        let mut session = state.active.take()?;
+        self.publish(state);
+        let action = session.actions.remove(&target)?;
+        Some(ActionRingActivation {
             device_key: session.device_key,
             action,
             haptic_route: session.haptic_route,
@@ -281,10 +302,80 @@ impl ActionRingManager {
     }
 }
 
+/// Label of a folder without a custom one.
+const FOLDER_LABEL: &str = "Folder";
+/// Icon of a folder without a custom one.
+const FOLDER_ICON: ActionRingIcon = ActionRingIcon::Layers;
+
+impl Session {
+    fn is_folder(&self, target: ActionRingTarget) -> bool {
+        target.child.is_none() && self.folders.contains(&target.slot)
+    }
+}
+
+/// The presentation and executable action of one action entry.
+fn leaf(entry: ActionRingEntry) -> (ActionRingPresentation, Action) {
+    let (action, custom_icon, custom_label) = entry.into_parts();
+    let literal = custom_label.is_some();
+    (
+        ActionRingPresentation {
+            label: custom_label.unwrap_or_else(|| action.label()),
+            literal,
+            icon: custom_icon.unwrap_or_else(|| ActionRingIcon::for_action(&action)),
+            children: BTreeMap::new(),
+        },
+        action,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openlogi_core::binding::ActionRingConfig;
+    use openlogi_core::binding::{ActionRingConfig, ActionRingFolder, RingAction};
+
+    const TOP: ActionRingTarget = ActionRingTarget::root(ActionRingSlot::Top);
+
+    fn spec_with_media_folder() -> ActionRingSessionSpec {
+        let mut spec = spec();
+        let mut items = BTreeMap::new();
+        items.insert(
+            ActionRingSlot::Top,
+            ActionRingEntry::new(RingAction::new(Action::PlayPause).expect("valid")),
+        );
+        spec.layout.set_folder(
+            ActionRingSlot::Right,
+            Some(ActionRingFolder {
+                label: Some("Media".into()),
+                icon: None,
+                items,
+            }),
+        );
+        spec
+    }
+
+    #[test]
+    fn folders_present_their_children_and_execute_only_them() {
+        let manager = ActionRingManager::default();
+        let invocation = manager.begin(spec_with_media_folder());
+        let folder = &invocation.slots[&ActionRingSlot::Right];
+        assert_eq!(folder.label, "Media");
+        assert!(folder.literal);
+        assert_eq!(folder.children[&ActionRingSlot::Top].label, "Play / Pause");
+
+        let folder_target = ActionRingTarget::root(ActionRingSlot::Right);
+        manager
+            .hover(invocation.session_id, folder_target)
+            .expect("folders are hoverable");
+        assert!(matches!(
+            manager.activate(invocation.session_id, folder_target),
+            Err(ActionRingCommandError::NotAnAction)
+        ));
+        let child = ActionRingTarget::child(ActionRingSlot::Right, ActionRingSlot::Top);
+        let activation = manager
+            .activate(invocation.session_id, child)
+            .expect("a folder's item executes");
+        assert_eq!(activation.action, Action::PlayPause);
+    }
 
     fn spec() -> ActionRingSessionSpec {
         ActionRingSessionSpec {
@@ -319,6 +410,7 @@ mod tests {
                 label: "Cut".to_string(),
                 literal: false,
                 icon: ActionRingIcon::Keyboard,
+                children: BTreeMap::new(),
             }
         );
         assert_eq!(invocation.language.as_deref(), Some("fr"));
@@ -368,12 +460,12 @@ mod tests {
         let manager = ActionRingManager::default();
         let invocation = manager.begin(spec());
         let activation = manager
-            .activate(invocation.session_id, ActionRingSlot::Top)
+            .activate(invocation.session_id, TOP)
             .expect("a live session must activate its top slot");
         assert_eq!(activation.device_key, "mouse-a");
         assert_eq!(activation.action, Action::Cut);
         assert!(matches!(
-            manager.activate(invocation.session_id, ActionRingSlot::Top),
+            manager.activate(invocation.session_id, TOP),
             Err(ActionRingCommandError::SessionNotFound)
         ));
     }
@@ -384,13 +476,10 @@ mod tests {
         let invocation = manager.begin(spec());
         assert!(
             manager
-                .hover(invocation.session_id, ActionRingSlot::Top)
+                .hover(invocation.session_id, TOP)
                 .is_ok_and(|hover| hover.is_some())
         );
-        assert_eq!(
-            manager.hover(invocation.session_id, ActionRingSlot::Top),
-            Ok(None)
-        );
+        assert_eq!(manager.hover(invocation.session_id, TOP), Ok(None));
     }
 
     #[tokio::test]
@@ -407,11 +496,11 @@ mod tests {
         let first = manager.begin(spec());
         let second = manager.begin(spec());
         assert!(matches!(
-            manager.activate(first.session_id, ActionRingSlot::Top),
+            manager.activate(first.session_id, TOP),
             Err(ActionRingCommandError::SessionNotFound)
         ));
         manager
-            .activate(second.session_id, ActionRingSlot::Top)
+            .activate(second.session_id, TOP)
             .expect("the replacement session must still be activatable");
     }
 
@@ -439,7 +528,7 @@ mod tests {
         drop(state);
 
         assert!(matches!(
-            manager.activate(invocation.session_id, ActionRingSlot::Top),
+            manager.activate(invocation.session_id, TOP),
             Err(ActionRingCommandError::SessionNotFound)
         ));
     }
