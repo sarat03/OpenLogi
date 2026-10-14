@@ -1,7 +1,8 @@
 //! Actions Ring settings and editor scope for the selected device.
 
 use openlogi_core::binding::{
-    ActionRingConfig, ActionRingIcon, ActionRingLayout, ActionRingSlot, RingAction,
+    ActionRingConfig, ActionRingIcon, ActionRingLayout, ActionRingSlot, ActionRingTarget,
+    RingAction,
 };
 
 use super::events::StateEvents;
@@ -55,25 +56,37 @@ impl AppState {
         ring.effective_layout(self.editing_action_ring_app())
     }
 
-    /// Replace or clear one slot in the open Actions Ring layout.
+    /// Replace or clear one position — a root slot or a folder item — in the
+    /// open Actions Ring layout.
     pub fn commit_action_ring_slot(
         &mut self,
-        slot: ActionRingSlot,
+        target: impl Into<ActionRingTarget>,
         action: Option<RingAction>,
     ) -> StateEvents {
+        let target = target.into();
         self.edit_action_ring_layout("Actions Ring slot", |layout| {
-            layout.set_action(slot, action);
+            layout.set_action_at(target, action);
         })
     }
 
-    /// Set or restore the action-derived icon for one slot in the open layout.
+    /// Set or restore the action-derived icon for one position in the open
+    /// layout.
     pub fn commit_action_ring_icon(
         &mut self,
-        slot: ActionRingSlot,
+        target: impl Into<ActionRingTarget>,
         icon: Option<ActionRingIcon>,
     ) -> StateEvents {
+        let target = target.into();
         self.edit_action_ring_layout("Actions Ring icon", |layout| {
-            layout.set_icon(slot, icon);
+            layout.set_icon_at(target, icon);
+        })
+    }
+
+    /// Turn the root `slot` into a folder (keeping its action inside) or back
+    /// into an action.
+    pub fn commit_action_ring_folder(&mut self, slot: ActionRingSlot, folder: bool) -> StateEvents {
+        self.edit_action_ring_layout("Actions Ring folder", |layout| {
+            layout.convert_to_folder(slot, folder);
         })
     }
 

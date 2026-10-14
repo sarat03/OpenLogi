@@ -9,8 +9,8 @@ use gpui_component::{
     scroll::ScrollableElement as _, v_flex,
 };
 use openlogi_core::binding::{
-    Action, ActionRingEntry, ActionRingIcon, ActionRingSlot, ApplicationTarget, Category, KeyCombo,
-    RingAction,
+    Action, ActionRingEntry, ActionRingIcon, ActionRingTarget, ApplicationTarget, Category,
+    KeyCombo, RingAction,
 };
 
 use super::action_icons::action_icon_path;
@@ -21,7 +21,7 @@ use crate::ui::components::{MenuRow, control_input};
 use crate::ui::theme::{self, Palette, Typography as _};
 
 pub(super) fn action_library(
-    slot: ActionRingSlot,
+    slot: ActionRingTarget,
     current: Option<&ActionRingEntry>,
     application_input: &Entity<InputState>,
     shortcut_input: &Entity<InputState>,
@@ -104,7 +104,7 @@ fn action_rows_scroller(content: impl IntoElement, scroll: &ScrollHandle) -> imp
 }
 
 fn icon_editor(
-    slot: ActionRingSlot,
+    slot: ActionRingTarget,
     action: &Action,
     current: Option<ActionRingIcon>,
     pal: Palette,
@@ -157,7 +157,7 @@ fn icon_button(
 }
 
 fn shortcut_editor(
-    slot: ActionRingSlot,
+    slot: ActionRingTarget,
     input: &Entity<InputState>,
     pal: Palette,
 ) -> impl IntoElement {
@@ -188,7 +188,11 @@ fn shortcut_editor(
         )
 }
 
-fn path_editor(slot: ActionRingSlot, input: &Entity<InputState>, pal: Palette) -> impl IntoElement {
+fn path_editor(
+    slot: ActionRingTarget,
+    input: &Entity<InputState>,
+    pal: Palette,
+) -> impl IntoElement {
     let submit_input = input.clone();
     v_flex()
         .gap_1()
@@ -220,7 +224,7 @@ fn path_editor(slot: ActionRingSlot, input: &Entity<InputState>, pal: Palette) -
 }
 
 fn action_sections(
-    slot: ActionRingSlot,
+    slot: ActionRingTarget,
     current: Option<&Action>,
     pal: Palette,
 ) -> impl Iterator<Item = impl IntoElement> {
@@ -288,18 +292,18 @@ fn ring_catalog() -> Vec<(Category, Vec<Action>)> {
     sections
 }
 
-fn commit_action(slot: ActionRingSlot, action: Action, cx: &mut gpui::App) {
+fn commit_action(slot: ActionRingTarget, action: Action, cx: &mut gpui::App) {
     let Ok(action) = RingAction::new(action) else {
         return;
     };
     commit_slot(slot, Some(action), cx);
 }
 
-fn commit_slot(slot: ActionRingSlot, action: Option<RingAction>, cx: &mut gpui::App) {
+fn commit_slot(slot: ActionRingTarget, action: Option<RingAction>, cx: &mut gpui::App) {
     AppState::apply(cx, |state| state.commit_action_ring_slot(slot, action));
 }
 
-fn commit_icon(slot: ActionRingSlot, icon: Option<ActionRingIcon>, cx: &mut gpui::App) {
+fn commit_icon(slot: ActionRingTarget, icon: Option<ActionRingIcon>, cx: &mut gpui::App) {
     AppState::apply(cx, |state| state.commit_action_ring_icon(slot, icon));
 }
 
