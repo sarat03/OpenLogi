@@ -5,10 +5,11 @@ mod wheel;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use openlogi_core::binding::{Action, Binding, ButtonId, default_binding};
+use openlogi_core::binding::{Action, Binding, ButtonId, GestureDirection, default_binding};
 use openlogi_core::config::ThumbwheelSensitivity;
 use openlogi_hid::CapturedInput;
 use openlogi_hid::thumbwheel::WheelResolution;
+use openlogi_inject::ContinuousGesture;
 use tracing::debug;
 
 use self::wheel::{ScrollScale, WheelAccumulators, WheelOutput, WheelRotation};
@@ -159,12 +160,11 @@ impl InputDispatcher {
                     debug!(key, %button, ?direction, "gesture from a canceled button lifecycle — ignored");
                     return;
                 };
-                if let Some(action) = plan
-                    .gesture_bindings
-                    .get(&button)
-                    .or_else(|| plan.side_gesture_bindings.get(&button))
-                    .and_then(|map| map.get(&direction))
-                {
+                if let Some(action) = gesture_action(plan, button, direction) {
+                    if action.is_continuous_gesture() {
+                        // Streamed from GestureMotion; a swipe never fires it.
+                        return;
+                    }
                     debug!(key, %button, ?direction, action = %action.label(), "gesture → action");
                     if !self
                         .outputs
@@ -203,8 +203,26 @@ impl InputDispatcher {
                     }
                 }
             }
+            CapturedInput::GestureMotion {
+                button,
+                direction,
+                dx,
+                dy,
+            } => {
+                if self.gesture_presses.get(session, button).is_none() {
+                    return;
+                }
+                if let Some((gesture, amount)) = gesture_action(plan, button, direction)
+                    .and_then(|action| continuous_gesture(action, direction, dx, dy))
+                {
+                    self.outputs.stream_gesture(gesture, amount);
+                }
+            }
             CapturedInput::ButtonUp(button) => {
                 self.outputs.actions.try_hidpp_button_up(session, button);
+                if self.gesture_presses.get(session, button).is_some() {
+                    self.outputs.end_gesture();
+                }
                 self.gesture_presses.end(session, button);
             }
             CapturedInput::ButtonPulse(button) => {
@@ -254,6 +272,9 @@ impl InputDispatcher {
         ) {
             WheelOutput::Idle => {}
             WheelOutput::Scroll(delta) => self.outputs.post_scroll(session, delta),
+            WheelOutput::DesktopSwipe(progress) => self
+                .outputs
+                .stream_gesture(ContinuousGesture::DesktopSwipe, progress),
             WheelOutput::FireAction => {
                 debug!(key, ?button, action = %action.label(), "thumb wheel → action");
                 self.outputs.actions.dispatch_pointer_action(
@@ -263,6 +284,48 @@ impl InputDispatcher {
                 );
             }
         }
+    }
+}
+
+/// The action `button`'s gesture map binds to `direction`, from the main or
+/// side gesture bindings.
+fn gesture_action(
+    plan: &DispatchPlan,
+    button: ButtonId,
+    direction: GestureDirection,
+) -> Option<&Action> {
+    plan.gesture_bindings
+        .get(&button)
+        .or_else(|| plan.side_gesture_bindings.get(&button))
+        .and_then(|map| map.get(&direction))
+}
+
+/// Magnification per raw-XY count of gesture-button travel: a 250-count
+/// stroke (one swipe's worth) zooms by about a quarter.
+const ZOOM_PER_COUNT: f64 = 0.001;
+/// Rotation in degrees per raw-XY count: one swipe's worth turns 45°.
+const ROTATE_PER_COUNT: f64 = 0.18;
+
+/// The continuous gesture and its delta that one report of travel streams for
+/// `action`, or `None` when the action is not continuous. Travel along the
+/// locked axis drives it: up or right zooms in; right turns clockwise.
+// ponytail: fixed gains, Options+ exposes none either; make them settings if asked.
+fn continuous_gesture(
+    action: &Action,
+    direction: GestureDirection,
+    dx: i32,
+    dy: i32,
+) -> Option<(ContinuousGesture, f64)> {
+    let along = match direction {
+        GestureDirection::Left | GestureDirection::Right => f64::from(dx),
+        GestureDirection::Up | GestureDirection::Down => -f64::from(dy),
+        GestureDirection::Click => return None,
+    };
+    match action {
+        Action::GestureZoom => Some((ContinuousGesture::Zoom, along * ZOOM_PER_COUNT)),
+        // Positive rotation is counter-clockwise, so rightward travel negates.
+        Action::GestureRotate => Some((ContinuousGesture::Rotate, -along * ROTATE_PER_COUNT)),
+        _ => None,
     }
 }
 

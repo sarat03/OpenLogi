@@ -52,6 +52,25 @@ pub struct GestureOutputs {
     actions: ActionDispatcher,
     scroll: ScrollInputHandle,
     hook_maps: SharedHookMaps,
+    gestures: GestureSink,
+}
+
+/// One instruction for the continuous-gesture injector.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum GestureSignal {
+    Stream(openlogi_inject::ContinuousGesture, f64),
+    End,
+}
+
+/// Where continuous gestures go: the OS injector in production, a recorder in
+/// tests (which must not post real gestures on the developer's desktop).
+type GestureSink = fn(GestureSignal);
+
+fn inject_gesture(signal: GestureSignal) {
+    match signal {
+        GestureSignal::Stream(gesture, delta) => openlogi_inject::stream_gesture(gesture, delta),
+        GestureSignal::End => openlogi_inject::end_gesture(),
+    }
 }
 
 impl GestureOutputs {
@@ -66,7 +85,23 @@ impl GestureOutputs {
             actions,
             scroll,
             hook_maps,
+            gestures: inject_gesture,
         }
+    }
+
+    /// Test seam: route continuous gestures to `sink` instead of the OS.
+    #[cfg(test)]
+    pub(crate) fn with_gesture_sink(mut self, sink: GestureSink) -> Self {
+        self.gestures = sink;
+        self
+    }
+
+    fn stream_gesture(&self, gesture: openlogi_inject::ContinuousGesture, delta: f64) {
+        (self.gestures)(GestureSignal::Stream(gesture, delta));
+    }
+
+    fn end_gesture(&self) {
+        (self.gestures)(GestureSignal::End);
     }
 
     fn cancel_session(&self, session: &HidppSessionId) {

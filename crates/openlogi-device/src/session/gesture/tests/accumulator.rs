@@ -530,6 +530,16 @@ fn a_side_gesture_button_uses_its_hidpp_raw_xy() {
     );
     assert_eq!(
         rx.try_recv(),
+        Ok(CapturedInput::GestureMotion {
+            button: ButtonId::Forward,
+            direction: GestureDirection::Left,
+            dx: -260,
+            dy: 0,
+        }),
+        "the started hold streams its angle-snapped travel before firing"
+    );
+    assert_eq!(
+        rx.try_recv(),
         Ok(CapturedInput::Gesture(
             ButtonId::Forward,
             GestureDirection::Left
@@ -596,6 +606,16 @@ fn a_dpi_gesture_button_uses_the_shared_raw_xy_path() {
     assert_eq!(
         rx.try_recv(),
         Ok(CapturedInput::ButtonDown(ButtonId::DpiToggle))
+    );
+    assert_eq!(
+        rx.try_recv(),
+        Ok(CapturedInput::GestureMotion {
+            button: ButtonId::DpiToggle,
+            direction: GestureDirection::Up,
+            dx: 0,
+            dy: -260,
+        }),
+        "the started hold streams its angle-snapped travel before firing"
     );
     assert_eq!(
         rx.try_recv(),

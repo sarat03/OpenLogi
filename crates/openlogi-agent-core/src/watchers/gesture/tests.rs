@@ -706,3 +706,87 @@ async fn a_pointer_only_plan_refresh_keeps_a_held_gesture() {
     scroll.shutdown();
     actions.shutdown();
 }
+
+static STREAMED: std::sync::Mutex<Vec<super::GestureSignal>> = std::sync::Mutex::new(Vec::new());
+
+fn record_gesture(signal: super::GestureSignal) {
+    STREAMED.lock().unwrap().push(signal);
+}
+
+#[tokio::test]
+async fn a_zoom_rotate_hold_streams_zoom_and_ends_on_release() {
+    use crate::runtime::scroll::{ScrollPreferences, ScrollRuntime};
+    use openlogi_inject::ContinuousGesture;
+
+    let (_signal, device_io) = openlogi_hid::device_io_channel();
+    let (ring, _ring_rx) = mpsc::unbounded_channel();
+    let device_access = DeviceAccess {
+        channel: CaptureChannelSlot::default(),
+        registry: openlogi_hid::ChannelRegistry::default(),
+        receiver_access: ReceiverAccess::default(),
+        device_io,
+    };
+    let mut actions =
+        crate::runtime::ActionRuntime::new(Arc::default(), device_access, ring).unwrap();
+    let mut scroll = ScrollRuntime::spawn(Arc::new(ScrollPreferences::new(
+        false,
+        VerticalScrollSensitivity::default(),
+    )))
+    .unwrap();
+    let mut dispatcher = InputDispatcher::new(
+        GestureOutputs::new(actions.dispatcher(), scroll.input(), Arc::default())
+            .with_gesture_sink(record_gesture),
+    );
+
+    let mut zoom = plan();
+    zoom.dispatch.gesture_bindings.insert(
+        ButtonId::GestureButton,
+        [
+            (GestureDirection::Up, Action::GestureZoom),
+            (GestureDirection::Down, Action::GestureZoom),
+            (GestureDirection::Click, Action::SmartZoom),
+        ]
+        .into(),
+    );
+    let session = live_session_from_plan(7, zoom);
+    let id = session.id().clone();
+    let motion = |dy| CapturedInput::GestureMotion {
+        button: ButtonId::GestureButton,
+        direction: GestureDirection::Up,
+        dx: 0,
+        dy,
+    };
+
+    // Motion with no admitted press is ignored.
+    dispatcher.dispatch(&id, session.dispatch(), motion(-100));
+    assert!(STREAMED.lock().unwrap().is_empty());
+
+    dispatcher.dispatch(
+        &id,
+        session.dispatch(),
+        CapturedInput::ButtonDown(ButtonId::GestureButton),
+    );
+    dispatcher.dispatch(&id, session.dispatch(), motion(-100));
+    // A swipe's discrete fire never also triggers the continuous action.
+    dispatcher.dispatch(
+        &id,
+        session.dispatch(),
+        CapturedInput::Gesture(ButtonId::GestureButton, GestureDirection::Up),
+    );
+    dispatcher.dispatch(
+        &id,
+        session.dispatch(),
+        CapturedInput::ButtonUp(ButtonId::GestureButton),
+    );
+
+    let streamed = std::mem::take(&mut *STREAMED.lock().unwrap());
+    assert_eq!(streamed.len(), 2, "{streamed:?}");
+    assert!(
+        matches!(streamed[0], super::GestureSignal::Stream(ContinuousGesture::Zoom, delta) if delta > 0.0),
+        "upward travel zooms in: {streamed:?}"
+    );
+    assert_eq!(streamed[1], super::GestureSignal::End);
+
+    scroll.shutdown();
+    actions.shutdown();
+}

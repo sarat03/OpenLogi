@@ -232,7 +232,16 @@ impl CaptureAccum {
         }
         // Fire each time travel crosses the action threshold (mid-swipe,
         // repeatable per hold); the accumulator drops travel outside a hold.
-        if let Some(direction) = swipe.accumulate(i32::from(dx), i32::from(dy)) {
+        let fired = swipe.accumulate(i32::from(dx), i32::from(dy));
+        if let (Some(direction), Some((dx, dy))) = (swipe.direction(), swipe.motion()) {
+            let _ = sink.send(CapturedInput::GestureMotion {
+                button: *button,
+                direction,
+                dx,
+                dy,
+            });
+        }
+        if let Some(direction) = fired {
             debug!(?direction, %button, "gesture committed");
             let _ = sink.send(CapturedInput::Gesture(*button, direction));
         }

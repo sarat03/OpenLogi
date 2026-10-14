@@ -21,6 +21,12 @@ const ACTION_DECAY: Duration = Duration::from_millis(300);
 /// flick triggers once instead of repeating across a fast spin.
 const ACTION_COOLDOWN: Duration = Duration::from_millis(200);
 
+/// Dock-swipe progress (in desktop widths) per native wheel tick. Rolling the
+/// thumb wheel drags the desktop continuously, as Logi Options+'s thumb-wheel
+/// "Switch between desktops" does; the Dock commits the switch on release.
+// ponytail: fixed feel, tie it to the thumb-wheel sensitivity if asked.
+const DESKTOP_SWIPE_PER_TICK: f64 = 0.1;
+
 /// Per-direction wheel state. Reversing the physical wheel must not cancel
 /// progress already earned in the other direction.
 #[derive(Default)]
@@ -106,6 +112,12 @@ impl WheelDirection {
         }
         if let Some(binding) = ScrollBinding::from_action(action) {
             return self.advance_scroll(binding, magnitude, scale);
+        }
+        if let Some(sign) = desktop_swipe_sign(action) {
+            // Streamed like a scroll: no progress or cooldown to retain.
+            self.state = WheelState::Idle;
+            let progress = sign * f64::from(magnitude) * scale.per_increment();
+            return WheelOutput::DesktopSwipe(progress * DESKTOP_SWIPE_PER_TICK);
         }
         self.advance_action(action, magnitude, scale.sensitivity, now)
     }
@@ -244,6 +256,16 @@ impl ScrollBinding {
     }
 }
 
+/// The swipe sign a desktop-switch binding streams on the thumb wheel:
+/// negative toward the previous desktop.
+fn desktop_swipe_sign(action: &Action) -> Option<f64> {
+    match action {
+        Action::PreviousDesktop => Some(-1.0),
+        Action::NextDesktop => Some(1.0),
+        _ => None,
+    }
+}
+
 /// What advancing one direction should produce.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum WheelOutput {
@@ -253,6 +275,9 @@ pub(super) enum WheelOutput {
     Scroll(ScrollDelta),
     /// Fire the direction's bound discrete action.
     FireAction,
+    /// Continue a Dock desktop swipe by this much progress (desktop widths,
+    /// negative toward the previous desktop).
+    DesktopSwipe(f64),
 }
 
 /// Device-native scroll scale combined with the user's sensitivity.

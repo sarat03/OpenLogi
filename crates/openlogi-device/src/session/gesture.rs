@@ -53,6 +53,18 @@ pub enum CapturedInput {
     /// tagged with the source control so dispatch resolves it against that
     /// button's own direction map.
     Gesture(ButtonId, GestureDirection),
+    /// Angle-snapped travel of a started gesture hold, for a binding that
+    /// streams a continuous trackpad gesture instead of firing per swipe.
+    GestureMotion {
+        /// The held gesture source.
+        button: ButtonId,
+        /// The hold's locked direction (its axis never changes mid-hold).
+        direction: GestureDirection,
+        /// Raw-XY travel of this report (`+x` right, `+y` down).
+        dx: i32,
+        /// See `dx`.
+        dy: i32,
+    },
     /// A diverted button's physical down edge.
     ButtonDown(ButtonId),
     /// Thumb-wheel rotation to re-synthesise on the configured scroll axis.
