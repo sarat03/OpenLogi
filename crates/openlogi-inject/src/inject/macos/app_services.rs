@@ -11,13 +11,6 @@ pub(super) fn symbol(symbol: &CStr) -> Option<*mut c_void> {
     resolve(APP_SERVICES, &HANDLE, symbol)
 }
 
-/// Read-only Space SPI lives in SkyLight; resolve it without a strong link.
-pub(super) fn sky_light_symbol(symbol: &CStr) -> Option<*mut c_void> {
-    const SKY_LIGHT: &CStr = c"/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight";
-    static HANDLE: OnceLock<usize> = OnceLock::new();
-    resolve(SKY_LIGHT, &HANDLE, symbol)
-}
-
 fn resolve(framework: &CStr, handle: &OnceLock<usize>, symbol: &CStr) -> Option<*mut c_void> {
     const RTLD_LAZY: c_int = 0x1;
 

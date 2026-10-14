@@ -16,7 +16,7 @@ use openlogi_core::config::FunctionKey;
 
 use super::{HeldKey, HeldModifiers, KeyPhase};
 
-/// Shared resolver for private ApplicationServices and SkyLight SPI.
+/// Shared resolver for private ApplicationServices SPI.
 #[expect(
     unsafe_code,
     reason = "private ApplicationServices SPI symbols are resolved via dlopen/dlsym FFI"
@@ -45,6 +45,9 @@ mod browser;
     reason = "the private CoreDockSendNotification SPI is only reachable via dlopen/dlsym FFI"
 )]
 mod dock;
+/// Private CGEvent encodings of trackpad gestures (Dock swipe, magnify,
+/// rotate, smart zoom).
+mod gesture;
 #[expect(
     unsafe_code,
     reason = "Text Input Source Services and UCKeyTranslate have no objc2 bindings"
@@ -57,12 +60,6 @@ mod main_thread;
 )]
 mod menu_shortcut;
 mod scroll;
-/// DockSwipe events with read-only, per-display Space confirmation.
-#[expect(
-    unsafe_code,
-    reason = "read-only SkyLight SPI and AppKit notification registration require FFI"
-)]
-mod spaces;
 /// Screenshots, posted through their system symbolic hotkey records.
 ///
 /// That respects the user's configured shortcut instead of assuming one, is
@@ -79,11 +76,11 @@ mod tests;
 use app_services::symbol as app_services_symbol;
 pub(super) use browser::ax_browser_navigate;
 use dock::{app_expose, launchpad, mission_control, show_desktop};
+pub(super) use gesture::post_gesture;
 use keyboard_layout::layout_key;
 use menu_shortcut::{MenuPress, MenuShortcut};
 use scroll::dispatch_scroll;
 pub(super) use scroll::{post_scroll, post_smooth_scroll};
-use spaces::{next_desktop, previous_desktop};
 use symbolic_hotkey::{capture_region, screenshot};
 
 // NX_KEYTYPE_* constants from <IOKit/hidsystem/ev_keymap.h>.
@@ -377,6 +374,32 @@ fn key_event(vk: u16, flags: CGEventFlags, phase: KeyPhase) -> Option<CGEvent> {
     event.set_flags(flags);
     tag_synthetic(&event);
     Some(event)
+}
+
+/// `kVK_LeftArrow` / `kVK_RightArrow`.
+const VK_LEFT_ARROW: u16 = 0x7B;
+const VK_RIGHT_ARROW: u16 = 0x7C;
+
+fn previous_desktop() {
+    switch_desktop(VK_LEFT_ARROW);
+}
+
+fn next_desktop() {
+    switch_desktop(VK_RIGHT_ARROW);
+}
+
+/// Mission Control's "Move left/right a space" shortcut, exactly as Logi
+/// Options+ posts it for its gesture button (captured at runtime): the arrow
+/// goes down with Control + Fn — arrow keys always carry Fn on macOS, and the
+/// WindowServer matcher requires it — and comes up with Control released.
+fn switch_desktop(vk: u16) {
+    let fn_flag = CGEventFlags::CGEventFlagSecondaryFn;
+    post_key_phase(
+        vk,
+        CGEventFlags::CGEventFlagControl | fn_flag,
+        KeyPhase::Down,
+    );
+    post_key_phase(vk, fn_flag, KeyPhase::Up);
 }
 
 /// Post a key-down + key-up pair for `vk` with `flags` set.

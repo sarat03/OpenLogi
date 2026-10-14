@@ -748,3 +748,19 @@ mod tests {
         }
     }
 }
+
+/// Streamed trackpad gestures have no native counterpart here. A finished
+/// desktop swipe that travelled at least half a desktop switches once through
+/// the platform shortcut; magnify and rotate frames are skipped.
+pub(super) fn post_gesture(frame: &super::gesture::GestureFrame) {
+    use super::gesture::{ContinuousGesture, GesturePhase};
+    match (frame.kind, frame.phase) {
+        (ContinuousGesture::DesktopSwipe, GesturePhase::Ended) if frame.total <= -0.5 => {
+            execute(&Action::PreviousDesktop);
+        }
+        (ContinuousGesture::DesktopSwipe, GesturePhase::Ended) if frame.total >= 0.5 => {
+            execute(&Action::NextDesktop);
+        }
+        _ => tracing::trace!(?frame, "no native gesture equivalent — frame skipped"),
+    }
+}

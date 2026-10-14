@@ -21,8 +21,9 @@ use openlogi_core::scroll::ScrollDelta;
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[cfg(any(target_os = "macos", test))]
-mod space_switch;
+mod gesture;
+
+pub use gesture::{ContinuousGesture, end_gesture, stream_gesture};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -252,16 +253,9 @@ fn run_workflow(steps: &[WorkflowStep]) {
 /// `SetDpiPreset`, `ToggleSmartShift`) have no CGEvent equivalent and are
 /// handled at the hook/HID layer, logging a trace here.
 ///
-/// macOS `PreviousDesktop` / `NextDesktop` send a DockSwipe without modifying
-/// system shortcuts. This call waits for posting (or cancellation), preserving
-/// event order for sequential callers, but not for the desktop animation to end.
-/// A dedicated worker confirms the pointer display's Space; the process must
-/// remain alive to receive that diagnostic. Overlapping switches are skipped,
-/// not queued. Call from an action worker, never an input-tap callback.
-/// Worker preparation has a two-second cancellation deadline; a canceled
-/// worker cannot post later and retains its busy slot until it exits. Initial
-/// cursor capture and committed native post calls are not interruptible: this
-/// is not a hard wall-clock limit on `execute`.
+/// macOS `PreviousDesktop` / `NextDesktop` press Mission Control's
+/// Control+Fn+arrow shortcut, as Logi Options+ does for its gesture button;
+/// the continuous thumb-wheel desktop swipe goes through [`stream_gesture`].
 ///
 /// On Linux, key and scroll events are injected via a lazily-created `uinput`
 /// virtual device. Mouse clicks inject `BTN_*` events. macOS-only window
