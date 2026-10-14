@@ -62,8 +62,8 @@ pub enum Effect<'a> {
     /// Type this text via unicode input.
     Text(&'a str),
     /// Handled entirely by the agent/hook layer — DPI presets, SmartShift,
-    /// the Actions Ring, and launching an application. The injector logs
-    /// and does nothing.
+    /// the Actions Ring, launching an application, and the continuous
+    /// gestures the agent streams. The injector logs and does nothing.
     ///
     /// [`Action::OpenApplication`] is included here even though
     /// `openlogi_inject::execute` does open it: that happens in the
@@ -191,6 +191,8 @@ pub enum NativeAction {
     CaptureRegion,
     /// Put the computer to sleep.
     Sleep,
+    /// The trackpad's smart zoom (two-finger double tap).
+    SmartZoom,
 }
 
 /// A power-user scripting escape hatch, borrowed from the originating
@@ -266,7 +268,10 @@ impl Action {
             | Action::SetDpiPreset(_)
             | Action::ToggleSmartShift
             | Action::ShowActionsRing
-            | Action::OpenApplication(_) => Effect::AgentSide,
+            | Action::OpenApplication(_)
+            | Action::GestureZoom
+            | Action::GestureRotate => Effect::AgentSide,
+            Action::SmartZoom => Effect::Native(NativeAction::SmartZoom),
 
             Action::ScrollUp => Effect::Scroll { dx: 0, dy: 1 },
             Action::ScrollDown => Effect::Scroll { dx: 0, dy: -1 },

@@ -1,7 +1,7 @@
 //! Private CGEvent encodings of trackpad gestures, field for field as Logi
 //! Options+ posts them (captured from `logioptionsplus_agent` with a passive
-//! event tap): Dock swipes as `kCGSEventDockControl` (type 30), magnify and
-//! rotate as `kCGSEventGesture` (type 29).
+//! event tap): Dock swipes as `kCGSEventDockControl` (type 30), magnify,
+//! rotate and smart zoom as `kCGSEventGesture` (type 29).
 
 use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventTapLocation, CGEventType};
@@ -27,6 +27,7 @@ const FIELD_DOCK_CONSTANT: u32 = 138;
 /// `IOHIDEventType` values carried in [`FIELD_HID_TYPE`].
 const HID_ROTATION: i64 = 5;
 const HID_ZOOM: i64 = 8;
+const HID_ZOOM_TOGGLE: i64 = 22;
 const HID_DOCK_SWIPE: i64 = 23;
 
 /// `IOHIDSwipeMask` bits: the Dock swipe's direction, set on its first change.
@@ -39,6 +40,17 @@ pub(in crate::inject) fn post_gesture(frame: &GestureFrame) {
         tracing::warn!(?frame, "gesture event allocation failed");
         return;
     };
+    CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&event));
+}
+
+/// Post a one-shot smart zoom (the trackpad's two-finger double tap).
+pub(super) fn smart_zoom() {
+    let Some(event) = new_event(EVENT_GESTURE) else {
+        tracing::warn!("smart-zoom event allocation failed");
+        return;
+    };
+    set_int(&event, FIELD_HID_TYPE, HID_ZOOM_TOGGLE);
+    set_int(&event, FIELD_PHASE, 0);
     CGEvent::post(CGEventTapLocation::SessionEventTap, Some(&event));
 }
 

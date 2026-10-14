@@ -256,6 +256,7 @@ fn run_workflow(steps: &[WorkflowStep]) {
 /// macOS `PreviousDesktop` / `NextDesktop` press Mission Control's
 /// Control+Fn+arrow shortcut, as Logi Options+ does for its gesture button;
 /// the continuous thumb-wheel desktop swipe goes through [`stream_gesture`].
+/// `SmartZoom` posts the trackpad's smart-zoom gesture event.
 ///
 /// On Linux, key and scroll events are injected via a lazily-created `uinput`
 /// virtual device. Mouse clicks inject `BTN_*` events. macOS-only window

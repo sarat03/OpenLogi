@@ -77,6 +77,7 @@ use app_services::symbol as app_services_symbol;
 pub(super) use browser::ax_browser_navigate;
 use dock::{app_expose, launchpad, mission_control, show_desktop};
 pub(super) use gesture::post_gesture;
+use gesture::smart_zoom;
 use keyboard_layout::layout_key;
 use menu_shortcut::{MenuPress, MenuShortcut};
 use scroll::dispatch_scroll;
@@ -253,6 +254,7 @@ fn dispatch_native(native: NativeAction) {
         NativeAction::AppExpose => app_expose(),
         NativeAction::PreviousDesktop => previous_desktop(),
         NativeAction::NextDesktop => next_desktop(),
+        NativeAction::SmartZoom => smart_zoom(),
         NativeAction::ShowDesktop => show_desktop(),
         NativeAction::LaunchpadShow => launchpad(),
         // The Apple menu's Lock Screen item matches the character Q, so the

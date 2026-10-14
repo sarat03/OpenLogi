@@ -187,6 +187,28 @@ pub enum Action {
     /// cancellation and shutdown. Dispatchers without a release context must
     /// degrade this action to a balanced tap rather than leave keys held.
     HoldShortcut(KeyCombo),
+
+    // ── Trackpad gestures (appended) ─────────────────────────────────────────
+    /// Continuous magnify, Logi Options+'s Zoom/Rotate gesture preset: while
+    /// the gesture button is held, its vertical travel streams a trackpad
+    /// pinch (up zooms in). The agent streams it; the injector never fires it
+    /// as a one-shot.
+    GestureZoom,
+    /// Continuous rotation, the horizontal half of the same preset: the
+    /// gesture button's horizontal travel streams a trackpad rotation.
+    GestureRotate,
+    /// The trackpad's smart zoom (two-finger double tap) — the Zoom/Rotate
+    /// preset's click.
+    SmartZoom,
+}
+
+impl Action {
+    /// Whether this action streams a continuous trackpad gesture from a held
+    /// gesture button's travel instead of firing once per swipe.
+    #[must_use]
+    pub fn is_continuous_gesture(&self) -> bool {
+        matches!(self, Action::GestureZoom | Action::GestureRotate)
+    }
 }
 
 /// One step in a [`Action::Workflow`]. A workflow is a `Vec<WorkflowStep>`
@@ -285,6 +307,10 @@ macro_rules! for_each_unit_action {
             ScrollDown "Scroll Down" "actions.scroll_down" Scroll ArrowDown,
             HorizontalScrollLeft "Scroll Left" "actions.scroll_left" Scroll ScrollLeft,
             HorizontalScrollRight "Scroll Right" "actions.scroll_right" Scroll ScrollRight,
+            // Trackpad gestures
+            GestureZoom "Zoom (Gesture)" "actions.gesture_zoom" Navigation Search,
+            GestureRotate "Rotate (Gesture)" "actions.gesture_rotate" Navigation Refresh,
+            SmartZoom "Smart Zoom" "actions.smart_zoom" Navigation Search,
         }
     };
 }
