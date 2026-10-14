@@ -15,7 +15,7 @@ use std::{
 };
 
 use openlogi_core::action_ring::DISPLAY_LIFETIME;
-use openlogi_core::binding::ActionRingSlot;
+use openlogi_core::binding::ActionRingTarget;
 use openlogi_ipc::client::{self, ConnectError, Observer};
 use openlogi_ipc::{ActionRingInvocation, AgentClient, ClientKind, RingObservation};
 use succession::Standing;
@@ -29,11 +29,11 @@ use crate::session::allegiance;
 pub(crate) enum OverlayCommand {
     Hover {
         session_id: u64,
-        slot: ActionRingSlot,
+        target: ActionRingTarget,
     },
     Activate {
         session_id: u64,
-        slot: ActionRingSlot,
+        target: ActionRingTarget,
     },
     Cancel {
         session_id: u64,
@@ -233,12 +233,12 @@ type CommandFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 async fn send_command(client: &AgentClient, command: OverlayCommand) -> bool {
     let ctx = context::current();
     match command {
-        OverlayCommand::Hover { session_id, slot } => client
-            .action_ring_hover(ctx, session_id, slot)
+        OverlayCommand::Hover { session_id, target } => client
+            .action_ring_hover_target(ctx, session_id, target)
             .await
             .is_ok(),
-        OverlayCommand::Activate { session_id, slot } => client
-            .action_ring_activate(ctx, session_id, slot)
+        OverlayCommand::Activate { session_id, target } => client
+            .action_ring_activate_target(ctx, session_id, target)
             .await
             .is_ok(),
         OverlayCommand::Cancel { session_id } => {

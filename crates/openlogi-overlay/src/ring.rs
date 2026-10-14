@@ -7,12 +7,13 @@
 #[cfg(any(not(target_os = "windows"), test))]
 use gpui::{Bounds, Pixels, Point, Size, point};
 use gpui::{
-    Context, Hsla, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, WindowBackgroundAppearance, WindowKind,
-    WindowOptions, div, prelude::FluentBuilder as _, px, svg,
+    Context, Hsla, InteractiveElement, IntoElement, MouseMoveEvent, ParentElement, Render,
+    SharedString, StatefulInteractiveElement as _, Styled, Window, WindowBackgroundAppearance,
+    WindowKind, WindowOptions, div, prelude::FluentBuilder as _, px, svg,
 };
-use openlogi_core::binding::{Action, ActionRingSlot};
-use openlogi_ipc::ActionRingInvocation;
+use openlogi_core::binding::geometry::{self, VisibleItem};
+use openlogi_core::binding::{Action, ActionRingSlot, ActionRingTarget};
+use openlogi_ipc::{ActionRingInvocation, ActionRingPresentation};
 use openlogi_ui::action_icons::RING_CANCEL_ICON;
 use openlogi_ui::color;
 use std::sync::Arc;
@@ -22,8 +23,10 @@ use crate::ipc::OverlayCommand;
 use crate::session::{ClickAwaySession, ShowingRing};
 
 pub(crate) const WINDOW_SIZE: f32 = 360.0;
-pub(crate) const SLOT_SIZE: f32 = 54.0;
-pub(crate) const RADIUS: f32 = 122.0;
+/// Options+'s geometry is drawn at this fraction, so a ring with a fully
+/// expanded folder (two levels out) fits the overlay window.
+const SCALE: f32 = WINDOW_SIZE / geometry::CANVAS;
+const CENTER: f32 = WINDOW_SIZE / 2.0;
 
 /// The ring's own neutral scale. It floats over whatever is on the desktop, so
 /// unlike the settings app it cannot take its surfaces from the OS appearance —
@@ -31,6 +34,7 @@ pub(crate) const RADIUS: f32 = 122.0;
 /// shared (`openlogi_ui::color`); these greys are local by nature.
 const PANEL: Hsla = neutral(0.06, 0.82);
 const SLOT_RESTING: Hsla = neutral(0.16, 0.98);
+const FOLDER_OPEN: Hsla = neutral(0.24, 0.98);
 const CANCEL_RESTING: Hsla = neutral(0.20, 0.98);
 const GLYPH: Hsla = neutral(0.98, 1.0);
 const LABEL: Hsla = neutral(0.94, 1.0);
@@ -51,10 +55,14 @@ const fn neutral(lightness: f32, alpha: f32) -> Hsla {
 const SELECTED_FILL_L: f32 = 0.48;
 const SELECTED_BORDER_L: f32 = 0.78;
 
+/// What the pointer currently selects, Options+-style: the closest visible
+/// item (anywhere in the window), nothing in the centre's dismiss region. A
+/// hovered folder opens; leaving it for anything but its own items closes it.
 pub(crate) struct RingView {
     invocation: ActionRingInvocation,
     commands: mpsc::UnboundedSender<OverlayCommand>,
-    hovered: Option<ActionRingSlot>,
+    hovered: Option<ActionRingTarget>,
+    expanded: Option<ActionRingSlot>,
     /// Publishes click-away identity for exactly this view's lifetime.
     _showing: ShowingRing,
 }
@@ -71,6 +79,7 @@ impl RingView {
             invocation,
             commands,
             hovered: None,
+            expanded: None,
             _showing: showing,
         }
     }
@@ -88,30 +97,100 @@ impl RingView {
         });
     }
 
-    fn slot_element(
-        &self,
-        slot: ActionRingSlot,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        let presentation = self.invocation.slots.get(&slot)?;
-        let icon_path = presentation.icon.asset_path();
-        let selected = self.hovered == Some(slot);
-        let (left, top) = slot.placement(WINDOW_SIZE, RADIUS, SLOT_SIZE);
+    fn roots(&self) -> Vec<ActionRingSlot> {
+        populated(&self.invocation.slots)
+    }
+
+    fn is_folder(&self, slot: ActionRingSlot) -> bool {
+        self.invocation
+            .slots
+            .get(&slot)
+            .is_some_and(|presentation| !presentation.children.is_empty())
+    }
+
+    fn visible(&self) -> Vec<VisibleItem> {
+        let roots = self.roots();
+        let children = self
+            .expanded
+            .and_then(|folder| self.invocation.slots.get(&folder))
+            .map(|folder| populated(&folder.children))
+            .unwrap_or_default();
+        geometry::visible_items(
+            &roots,
+            self.expanded.map(|folder| (folder, children.as_slice())),
+        )
+    }
+
+    fn presentation(&self, target: ActionRingTarget) -> Option<&ActionRingPresentation> {
+        let root = self.invocation.slots.get(&target.slot)?;
+        match target.child {
+            None => Some(root),
+            Some(child) => root.children.get(&child),
+        }
+    }
+
+    fn pointer_moved(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let cursor = (
+            (f32::from(event.position.x) - CENTER) / SCALE,
+            (f32::from(event.position.y) - CENTER) / SCALE,
+        );
+        let hit = geometry::hit(cursor, &self.visible());
+        if hit == self.hovered {
+            return;
+        }
+        self.hovered = hit;
+        if let Some(target) = hit {
+            match target.child {
+                None if self.is_folder(target.slot) => self.expanded = Some(target.slot),
+                None => self.expanded = None,
+                Some(_) => {}
+            }
+            let _ = self.commands.send(OverlayCommand::Hover {
+                session_id: self.invocation.session_id,
+                target,
+            });
+        }
+        cx.notify();
+    }
+
+    /// A click anywhere selects what the pointer selects: an action executes,
+    /// a folder stays open, and the centre (or nothing) dismisses the ring.
+    fn clicked(&self, window: &mut Window) {
         let session_id = self.invocation.session_id;
-        let activate = self.commands.clone();
+        match self.hovered {
+            Some(target) if target.child.is_none() && self.is_folder(target.slot) => {}
+            Some(target) => {
+                let _ = self
+                    .commands
+                    .send(OverlayCommand::Activate { session_id, target });
+                window.remove_window();
+            }
+            None => {
+                let _ = self.commands.send(OverlayCommand::Cancel { session_id });
+                window.remove_window();
+            }
+        }
+    }
+
+    fn item_element(&self, item: VisibleItem) -> Option<gpui::AnyElement> {
+        let presentation = self.presentation(item.target)?;
+        let selected = self.hovered == Some(item.target);
+        let open_folder = item.target.child.is_none() && self.expanded == Some(item.target.slot);
+        let size = 2.0 * geometry::ITEM_RADIUS * SCALE;
         Some(
             div()
-                .id(("ring-slot", slot.index()))
                 .absolute()
-                .left(px(left))
-                .top(px(top))
-                .size(px(SLOT_SIZE))
+                .left(px(CENTER + item.at.0 * SCALE - size / 2.0))
+                .top(px(CENTER + item.at.1 * SCALE - size / 2.0))
+                .size(px(size))
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded_full()
                 .bg(if selected {
                     color::accent_at_lightness(SELECTED_FILL_L)
+                } else if open_folder {
+                    FOLDER_OPEN
                 } else {
                     SLOT_RESTING
                 })
@@ -121,96 +200,96 @@ impl RingView {
                 })
                 .shadow_md()
                 .text_color(GLYPH)
-                .cursor_pointer()
-                .child(svg().path(icon_path).size(px(22.0)).text_color(GLYPH))
-                .on_hover(cx.listener(move |this, hovered, _, cx| {
-                    if *hovered && this.hovered != Some(slot) {
-                        this.hovered = Some(slot);
-                        let _ = this
-                            .commands
-                            .send(OverlayCommand::Hover { session_id, slot });
-                        cx.notify();
-                    } else if !*hovered && this.hovered == Some(slot) {
-                        this.hovered = None;
-                        cx.notify();
-                    }
-                }))
-                .on_click(move |_, window, cx| {
-                    cx.stop_propagation();
-                    let _ = activate.send(OverlayCommand::Activate { session_id, slot });
-                    window.remove_window();
-                })
+                .child(
+                    svg()
+                        .path(presentation.icon.asset_path())
+                        .size(px(size * 0.45))
+                        .text_color(GLYPH),
+                )
                 .into_any_element(),
         )
     }
 }
 
+/// The populated positions of `slots`, in display order.
+fn populated(
+    slots: &std::collections::BTreeMap<ActionRingSlot, ActionRingPresentation>,
+) -> Vec<ActionRingSlot> {
+    ActionRingSlot::ALL
+        .into_iter()
+        .filter(|slot| slots.contains_key(slot))
+        .collect()
+}
+
+fn label_text(presentation: &ActionRingPresentation) -> SharedString {
+    // User-authored labels render verbatim: passing them through the
+    // localization table would translate any label that happens to collide
+    // with a known key ("Copy" → "Copier" under fr).
+    let label = if presentation.literal {
+        presentation.label.clone()
+    } else if let Some(key) = Action::translation_key_for_label(&presentation.label) {
+        rust_i18n::t!(key).into_owned()
+    } else {
+        presentation.label.clone()
+    };
+    SharedString::from(label)
+}
+
 impl Render for RingView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let session_id = self.invocation.session_id;
-        let root_commands = self.commands.clone();
-        let center_commands = self.commands.clone();
-        let hovered_label = self.hovered.and_then(|slot| {
-            let presentation = self.invocation.slots.get(&slot)?;
-            // User-authored labels render verbatim: passing them through the
-            // localization table would translate any label that happens to
-            // collide with a known key ("Copy" → "Copier" under fr).
-            let label = if presentation.literal {
-                presentation.label.clone()
-            } else if let Some(key) = Action::translation_key_for_label(&presentation.label) {
-                rust_i18n::t!(key).into_owned()
-            } else {
-                presentation.label.clone()
-            };
-            Some(SharedString::from(label))
-        });
-        let slots = ActionRingSlot::ALL
+        let hovered_label = self
+            .hovered
+            .and_then(|target| self.presentation(target))
+            .map(label_text);
+        let items = self
+            .visible()
             .into_iter()
-            .filter_map(|slot| self.slot_element(slot, cx))
+            .filter_map(|item| self.item_element(item))
             .collect::<Vec<_>>();
+        let panel = 2.0 * (geometry::LEVEL_SPACING + 1.5 * geometry::ITEM_RADIUS) * SCALE;
+        let cancel = 2.0 * geometry::CENTER_RADIUS * SCALE * 1.5;
 
         div()
             .id("ring-root")
             .relative()
             .size_full()
+            .on_mouse_move(cx.listener(|this, event, _, cx| this.pointer_moved(event, cx)))
             .child(
                 div()
                     .absolute()
-                    .left(px(18.0))
-                    .top(px(18.0))
-                    .size(px(WINDOW_SIZE - 36.0))
+                    .left(px(CENTER - panel / 2.0))
+                    .top(px(CENTER - panel / 2.0))
+                    .size(px(panel))
                     .rounded_full()
                     .bg(PANEL)
                     .shadow_lg(),
             )
-            .children(slots)
+            .children(items)
             .child(
                 div()
-                    .id("ring-cancel")
                     .absolute()
-                    .left(px(WINDOW_SIZE / 2.0 - 24.0))
-                    .top(px(WINDOW_SIZE / 2.0 - 24.0))
-                    .size(px(48.0))
+                    .left(px(CENTER - cancel / 2.0))
+                    .top(px(CENTER - cancel / 2.0))
+                    .size(px(cancel))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded_full()
                     .bg(CANCEL_RESTING)
                     .text_color(CANCEL_GLYPH)
-                    .cursor_pointer()
-                    .child(svg().path(RING_CANCEL_ICON).size(px(20.0)).flex_none())
-                    .on_click(move |_, window, cx| {
-                        cx.stop_propagation();
-                        let _ = center_commands.send(OverlayCommand::Cancel { session_id });
-                        window.remove_window();
-                    }),
+                    .child(
+                        svg()
+                            .path(RING_CANCEL_ICON)
+                            .size(px(cancel * 0.45))
+                            .flex_none(),
+                    ),
             )
             .when_some(hovered_label, |ring, label| {
                 ring.child(
                     div()
                         .absolute()
-                        .left(px(WINDOW_SIZE / 2.0 - 80.0))
-                        .top(px(WINDOW_SIZE / 2.0 + 34.0))
+                        .left(px(CENTER - 80.0))
+                        .top(px(CENTER + cancel / 2.0 + 6.0))
                         .w(px(160.0))
                         .text_center()
                         .text_sm()
@@ -218,10 +297,7 @@ impl Render for RingView {
                         .child(label),
                 )
             })
-            .on_click(move |_, window, _| {
-                let _ = root_commands.send(OverlayCommand::Cancel { session_id });
-                window.remove_window();
-            })
+            .on_click(cx.listener(|this, _, window, _| this.clicked(window)))
     }
 }
 

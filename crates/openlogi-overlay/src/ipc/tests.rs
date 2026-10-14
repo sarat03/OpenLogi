@@ -1,4 +1,5 @@
 use super::*;
+use openlogi_core::binding::ActionRingSlot;
 
 /// A client nobody serves: all a phase transition needs to stand for "an agent
 /// answered", because an observe call is only sent once it is polled.
@@ -52,19 +53,13 @@ async fn an_agent_that_keeps_coming_back_never_accumulates_its_way_to_an_exit() 
 fn activation_takes_priority_over_queued_hover_updates() {
     let hover = OverlayCommand::Hover {
         session_id: 1,
-        slot: ActionRingSlot::Top,
+        target: ActionRingTarget::root(ActionRingSlot::Top),
     };
     let activation = OverlayCommand::Activate {
         session_id: 1,
-        slot: ActionRingSlot::Right,
+        target: ActionRingTarget::root(ActionRingSlot::Right),
     };
-    assert!(matches!(
-        coalesce_command(hover, activation),
-        OverlayCommand::Activate {
-            slot: ActionRingSlot::Right,
-            ..
-        }
-    ));
+    assert_eq!(coalesce_command(hover, activation), activation);
     assert!(matches!(
         coalesce_command(activation, hover),
         OverlayCommand::Activate { .. }
@@ -81,7 +76,7 @@ fn a_new_sessions_hover_survives_the_previous_sessions_dismissal() {
     let closing = OverlayCommand::Cancel { session_id: 1 };
     let hover = OverlayCommand::Hover {
         session_id: 2,
-        slot: ActionRingSlot::Top,
+        target: ActionRingTarget::root(ActionRingSlot::Top),
     };
 
     assert!(matches!(
@@ -95,7 +90,7 @@ async fn newer_activation_supersedes_a_stale_retry_immediately() {
     let stale = OverlayCommand::Cancel { session_id: 1 };
     let replacement = OverlayCommand::Activate {
         session_id: 2,
-        slot: ActionRingSlot::Right,
+        target: ActionRingTarget::root(ActionRingSlot::Right),
     };
     let (tx, mut rx) = mpsc::unbounded_channel();
     tx.send(replacement).unwrap();
@@ -116,7 +111,7 @@ async fn newer_activation_supersedes_a_stalled_terminal_request() {
     let stale = OverlayCommand::Cancel { session_id: 1 };
     let replacement = OverlayCommand::Activate {
         session_id: 2,
-        slot: ActionRingSlot::Right,
+        target: ActionRingTarget::root(ActionRingSlot::Right),
     };
     let stale_started = std::sync::Arc::new(tokio::sync::Notify::new());
     let replacement_sent = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -165,7 +160,7 @@ async fn newer_activation_supersedes_a_stalled_terminal_request() {
 async fn stalled_hover_stops_when_the_command_channel_closes() {
     let hover = OverlayCommand::Hover {
         session_id: 1,
-        slot: ActionRingSlot::Top,
+        target: ActionRingTarget::root(ActionRingSlot::Top),
     };
     let request_started = std::sync::Arc::new(tokio::sync::Notify::new());
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -202,11 +197,11 @@ async fn stalled_hover_stops_when_the_command_channel_closes() {
 fn only_terminal_commands_are_retryable() {
     let hover = OverlayCommand::Hover {
         session_id: 1,
-        slot: ActionRingSlot::Top,
+        target: ActionRingTarget::root(ActionRingSlot::Top),
     };
     let activation = OverlayCommand::Activate {
         session_id: 1,
-        slot: ActionRingSlot::Top,
+        target: ActionRingTarget::root(ActionRingSlot::Top),
     };
     let cancellation = OverlayCommand::Cancel { session_id: 1 };
     assert!(!hover.is_terminal());
