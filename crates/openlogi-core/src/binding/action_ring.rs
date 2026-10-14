@@ -1,7 +1,9 @@
 //! Actions Ring configuration vocabulary.
 //!
-//! The ring is host-side UI: a trigger opens an eight-position layout and the
-//! agent executes the selected action. The types live beside [`Action`] because
+//! The ring is host-side UI: a trigger opens up to eight populated positions —
+//! each an action or a folder of up to eight more — laid out and selected the
+//! way Logi Options+ does it (see [`geometry`]), and the agent executes the
+//! selected action. The types live beside [`Action`] because
 //! they are persisted directly in `config.toml` and shared by the agent and GUI.
 
 use std::collections::BTreeMap;
@@ -14,6 +16,7 @@ use thiserror::Error;
 use super::Action;
 use crate::app::overlay_for;
 
+pub mod geometry;
 mod icon;
 
 pub use icon::ActionRingIcon;
@@ -98,6 +101,42 @@ impl ActionRingSlot {
             Self::Left => 6,
             Self::TopLeft => 7,
         }
+    }
+}
+
+/// The address of one selectable ring item: a root position, or a position
+/// inside the folder at that root position.
+///
+/// Crosses the overlay IPC boundary, so its shape is wire format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ActionRingTarget {
+    /// The root position.
+    pub slot: ActionRingSlot,
+    /// The position inside the folder at [`Self::slot`], if this addresses one
+    /// of its items.
+    pub child: Option<ActionRingSlot>,
+}
+
+impl ActionRingTarget {
+    /// A root position.
+    #[must_use]
+    pub const fn root(slot: ActionRingSlot) -> Self {
+        Self { slot, child: None }
+    }
+
+    /// Position `child` inside the folder at root position `folder`.
+    #[must_use]
+    pub const fn child(folder: ActionRingSlot, child: ActionRingSlot) -> Self {
+        Self {
+            slot: folder,
+            child: Some(child),
+        }
+    }
+}
+
+impl From<ActionRingSlot> for ActionRingTarget {
+    fn from(slot: ActionRingSlot) -> Self {
+        Self::root(slot)
     }
 }
 
@@ -215,18 +254,113 @@ impl ActionRingEntry {
     }
 }
 
-/// The actions displayed at the eight fixed ring positions.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A ring position that opens a second ring of actions around itself, like an
+/// Options+ submenu. Folders hold actions only, never further folders.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ActionRingFolder {
+    /// Display label; `None` shows a generic folder label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Display icon; `None` shows the folder icon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<ActionRingIcon>,
+    /// The folder's populated positions, laid out like the root ring's.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub items: BTreeMap<ActionRingSlot, ActionRingEntry>,
+}
+
+/// Why a deserialized [`ActionRingLayout`] was rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum RingLayoutError {
+    /// One position was given both an action and a folder.
+    #[error("Actions Ring position {0:?} is both an action and a folder")]
+    SlotAndFolder(ActionRingSlot),
+}
+
+/// The ring's populated positions: each holds either an action
+/// ([`Self::slots`]) or a folder ([`Self::folders`]), never both.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, try_from = "RawLayout")]
 pub struct ActionRingLayout {
-    /// Populated ring positions. An absent key is an intentionally empty slot.
+    /// Populated action positions. An absent key is an intentionally empty
+    /// slot, or a folder.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub slots: BTreeMap<ActionRingSlot, ActionRingEntry>,
+    /// Folder positions; disjoint from [`Self::slots`] by construction.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    folders: BTreeMap<ActionRingSlot, ActionRingFolder>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLayout {
+    #[serde(default)]
+    slots: BTreeMap<ActionRingSlot, ActionRingEntry>,
+    #[serde(default)]
+    folders: BTreeMap<ActionRingSlot, ActionRingFolder>,
+}
+
+impl TryFrom<RawLayout> for ActionRingLayout {
+    type Error = RingLayoutError;
+
+    fn try_from(raw: RawLayout) -> Result<Self, Self::Error> {
+        if let Some(&slot) = raw.folders.keys().find(|slot| raw.slots.contains_key(slot)) {
+            return Err(RingLayoutError::SlotAndFolder(slot));
+        }
+        Ok(Self {
+            slots: raw.slots,
+            folders: raw.folders,
+        })
+    }
 }
 
 impl ActionRingLayout {
+    /// A layout with no populated positions.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            slots: BTreeMap::new(),
+            folders: BTreeMap::new(),
+        }
+    }
+
+    /// The folder positions.
+    #[must_use]
+    pub const fn folders(&self) -> &BTreeMap<ActionRingSlot, ActionRingFolder> {
+        &self.folders
+    }
+
+    /// Every populated root position, actions and folders alike, in display
+    /// order ([`ActionRingSlot::ALL`]).
+    #[must_use]
+    pub fn populated(&self) -> Vec<ActionRingSlot> {
+        ActionRingSlot::ALL
+            .into_iter()
+            .filter(|slot| self.slots.contains_key(slot) || self.folders.contains_key(slot))
+            .collect()
+    }
+
+    /// Make `slot` a folder (replacing any action there), or clear the folder
+    /// at `slot` with `None`.
+    pub fn set_folder(&mut self, slot: ActionRingSlot, folder: Option<ActionRingFolder>) {
+        match folder {
+            Some(folder) => {
+                self.slots.remove(&slot);
+                self.folders.insert(slot, folder);
+            }
+            None => {
+                self.folders.remove(&slot);
+            }
+        }
+    }
+
     /// Replace or clear a slot while preserving its custom icon when replaced.
+    /// Placing an action on a folder position replaces the folder.
     pub fn set_action(&mut self, slot: ActionRingSlot, action: Option<RingAction>) {
+        if action.is_some() {
+            self.folders.remove(&slot);
+        }
         match (self.slots.entry(slot), action) {
             (Entry::Occupied(mut entry), Some(action)) => entry.get_mut().replace_action(action),
             (Entry::Vacant(entry), Some(action)) => {
@@ -250,6 +384,80 @@ impl ActionRingLayout {
     pub fn set_label(&mut self, slot: ActionRingSlot, label: Option<String>) {
         if let Some(entry) = self.slots.get_mut(&slot) {
             entry.set_label(label);
+        }
+    }
+
+    /// The action entry at `target`: a root action, or an item of the folder
+    /// at the target's root position.
+    #[must_use]
+    pub fn entry_at(&self, target: ActionRingTarget) -> Option<&ActionRingEntry> {
+        match target.child {
+            None => self.slots.get(&target.slot),
+            Some(child) => self.folders.get(&target.slot)?.items.get(&child),
+        }
+    }
+
+    /// [`Self::set_action`] for any target. Editing an item of a position
+    /// that is not a folder does nothing.
+    pub fn set_action_at(&mut self, target: ActionRingTarget, action: Option<RingAction>) {
+        let Some(child) = target.child else {
+            self.set_action(target.slot, action);
+            return;
+        };
+        let Some(folder) = self.folders.get_mut(&target.slot) else {
+            return;
+        };
+        match (folder.items.entry(child), action) {
+            (Entry::Occupied(mut entry), Some(action)) => entry.get_mut().replace_action(action),
+            (Entry::Vacant(entry), Some(action)) => {
+                entry.insert(ActionRingEntry::new(action));
+            }
+            (Entry::Occupied(entry), None) => {
+                entry.remove();
+            }
+            (Entry::Vacant(_), None) => {}
+        }
+    }
+
+    /// [`Self::set_icon`] for any target.
+    pub fn set_icon_at(&mut self, target: ActionRingTarget, icon: Option<ActionRingIcon>) {
+        let entry = match target.child {
+            None => self.slots.get_mut(&target.slot),
+            Some(child) => self
+                .folders
+                .get_mut(&target.slot)
+                .and_then(|folder| folder.items.get_mut(&child)),
+        };
+        if let Some(entry) = entry {
+            entry.set_icon(icon);
+        }
+    }
+
+    /// Turn the action at `slot` into a folder holding it at its top position,
+    /// or (with `false`) the folder back into an action — its first item, or
+    /// an empty position.
+    pub fn convert_to_folder(&mut self, slot: ActionRingSlot, folder: bool) {
+        if folder {
+            if self.folders.contains_key(&slot) {
+                return;
+            }
+            let mut items = BTreeMap::new();
+            if let Some(entry) = self.slots.remove(&slot) {
+                items.insert(ActionRingSlot::Top, entry);
+            }
+            self.folders.insert(
+                slot,
+                ActionRingFolder {
+                    items,
+                    ..ActionRingFolder::default()
+                },
+            );
+        } else if let Some(folder) = self.folders.remove(&slot)
+            && let Some((_, first)) = ActionRingSlot::ALL
+                .into_iter()
+                .find_map(|child| folder.items.get(&child).map(|entry| (child, entry.clone())))
+        {
+            self.slots.insert(slot, first);
         }
     }
 }
@@ -283,7 +491,10 @@ impl Default for ActionRingLayout {
                 )
             })
             .collect();
-        Self { slots }
+        Self {
+            slots,
+            folders: BTreeMap::new(),
+        }
     }
 }
 
@@ -481,9 +692,105 @@ Bottom = { action = { CustomShortcut = "Cmd+Shift+P" } }
     }
 
     #[test]
+    fn folders_roundtrip_and_share_the_display_order() {
+        let layout: ActionRingLayout = toml::from_str(
+            r#"
+[slots]
+Top = { action = "Copy" }
+[folders.Right]
+label = "Media"
+[folders.Right.items]
+Top = { action = "PlayPause" }
+Bottom = { action = "NextTrack" }
+"#,
+        )
+        .expect("a layout with a folder deserializes");
+        assert_eq!(
+            layout.populated(),
+            [ActionRingSlot::Top, ActionRingSlot::Right]
+        );
+        let media = &layout.folders()[&ActionRingSlot::Right];
+        assert_eq!(media.label.as_deref(), Some("Media"));
+        assert_eq!(
+            media.items[&ActionRingSlot::Bottom].action(),
+            &Action::NextTrack
+        );
+        let encoded = toml::to_string(&layout).expect("could not serialize");
+        assert_eq!(
+            toml::from_str::<ActionRingLayout>(&encoded).expect("roundtrip"),
+            layout
+        );
+    }
+
+    #[test]
+    fn converting_to_a_folder_keeps_the_action_and_back_again() {
+        let mut layout = ActionRingLayout::default();
+        layout.convert_to_folder(ActionRingSlot::Top, true);
+        let inside = ActionRingTarget::child(ActionRingSlot::Top, ActionRingSlot::Top);
+        assert_eq!(
+            layout.entry_at(inside).map(ActionRingEntry::action),
+            Some(&Action::Cut)
+        );
+        layout.set_action_at(
+            ActionRingTarget::child(ActionRingSlot::Top, ActionRingSlot::Right),
+            Some(RingAction::new(Action::Copy).expect("valid")),
+        );
+        layout.set_icon_at(inside, Some(ActionRingIcon::Keyboard));
+        assert_eq!(
+            layout
+                .entry_at(inside)
+                .and_then(ActionRingEntry::custom_icon),
+            Some(ActionRingIcon::Keyboard)
+        );
+        assert_eq!(layout.folders()[&ActionRingSlot::Top].items.len(), 2);
+
+        layout.convert_to_folder(ActionRingSlot::Top, false);
+        assert!(layout.folders().is_empty());
+        assert_eq!(layout.slots[&ActionRingSlot::Top].action(), &Action::Cut);
+    }
+
+    #[test]
+    fn folder_items_are_ignored_where_there_is_no_folder() {
+        let mut layout = ActionRingLayout::default();
+        let target = ActionRingTarget::child(ActionRingSlot::Top, ActionRingSlot::Top);
+        layout.set_action_at(target, Some(RingAction::new(Action::Copy).expect("valid")));
+        assert!(layout.entry_at(target).is_none());
+        assert_eq!(layout.slots[&ActionRingSlot::Top].action(), &Action::Cut);
+    }
+
+    #[test]
+    fn a_position_cannot_be_both_an_action_and_a_folder() {
+        let error = toml::from_str::<ActionRingLayout>(
+            r#"
+[slots]
+Top = { action = "Copy" }
+[folders.Top]
+"#,
+        )
+        .expect_err("an action and a folder may not share a position");
+        assert!(
+            error.to_string().contains("both an action and a folder"),
+            "{error}"
+        );
+
+        let mut layout = ActionRingLayout::default();
+        layout.set_folder(ActionRingSlot::Top, Some(ActionRingFolder::default()));
+        assert!(
+            !layout.slots.contains_key(&ActionRingSlot::Top),
+            "a folder replaces the action"
+        );
+        layout.set_action(
+            ActionRingSlot::Top,
+            Some(RingAction::new(Action::Copy).expect("valid")),
+        );
+        assert!(layout.folders().is_empty(), "an action replaces the folder");
+    }
+
+    #[test]
     fn app_layout_replaces_the_default_layout() {
         let mut config = ActionRingConfig::default();
         let safari = ActionRingLayout {
+            folders: BTreeMap::new(),
             slots: BTreeMap::from([(
                 ActionRingSlot::Top,
                 ActionRingEntry::new(
@@ -503,6 +810,7 @@ Bottom = { action = { CustomShortcut = "Cmd+Shift+P" } }
     fn a_ring_layout_keyed_by_executable_survives_a_versioned_install_path() {
         let mut config = ActionRingConfig::default();
         let sharex = ActionRingLayout {
+            folders: BTreeMap::new(),
             slots: BTreeMap::from([(
                 ActionRingSlot::Top,
                 ActionRingEntry::new(
