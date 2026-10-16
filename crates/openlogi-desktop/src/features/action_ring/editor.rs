@@ -15,6 +15,7 @@ use openlogi_core::binding::{
 
 use super::action_icons::action_icon_path;
 use crate::features::binding_editor::editor_section;
+use crate::features::shortcut_recorder::ShortcutRecorder;
 use crate::state::AppState;
 use crate::ui::action::localized_action_label;
 use crate::ui::components::{MenuRow, control_input};
@@ -24,7 +25,7 @@ pub(super) fn action_library(
     slot: ActionRingSlot,
     current: Option<&ActionRingEntry>,
     application_input: &Entity<InputState>,
-    shortcut_input: &Entity<InputState>,
+    shortcut_recorder: &Entity<ShortcutRecorder>,
     library_scroll: &ScrollHandle,
     pal: Palette,
 ) -> impl IntoElement {
@@ -84,7 +85,7 @@ pub(super) fn action_library(
                         pal,
                     ))
                 })
-                .child(shortcut_editor(slot, shortcut_input, pal))
+                .child(shortcut_editor(slot, shortcut_recorder, pal))
                 .child(path_editor(slot, application_input, pal))
                 .children(action_sections(slot, current_action.as_ref(), pal)),
             library_scroll,
@@ -163,33 +164,30 @@ fn icon_button(
 
 fn shortcut_editor(
     slot: ActionRingSlot,
-    input: &Entity<InputState>,
+    recorder: &Entity<ShortcutRecorder>,
     pal: Palette,
 ) -> impl IntoElement {
-    let submit_input = input.clone();
+    let submit_recorder = recorder.clone();
     v_flex()
         .gap_1()
         .child(editor_section(tr!("action_ring.custom_shortcut"), pal))
         .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(control_input(input).cleanable(true)),
-                )
-                .child(
-                    Button::new("ring-add-shortcut")
-                        .compact()
-                        .label(tr!("common.add"))
-                        .on_click(move |_, _, cx| {
-                            let shortcut = submit_input.read(cx).value().to_string();
-                            if let Ok(combo) = shortcut.parse::<KeyCombo>() {
-                                commit_action(slot, Action::CustomShortcut(combo), cx);
-                            }
-                        }),
-                ),
+            h_flex().gap_2().child(recorder.clone()).child(
+                Button::new("ring-add-shortcut")
+                    .compact()
+                    .label(tr!("common.add"))
+                    .on_click(move |_, _, cx| {
+                        let shortcut = submit_recorder
+                            .read(cx)
+                            .input()
+                            .read(cx)
+                            .value()
+                            .to_string();
+                        if let Ok(combo) = shortcut.parse::<KeyCombo>() {
+                            commit_action(slot, Action::CustomShortcut(combo), cx);
+                        }
+                    }),
+            ),
         )
 }
 

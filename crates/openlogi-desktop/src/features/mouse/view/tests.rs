@@ -227,7 +227,7 @@ fn a_selected_gesture_can_render_in_the_binding_inspector(cx: &mut TestAppContex
             ActionPickerContext {
                 open: true,
                 search: &view.action_search,
-                shortcut_input: &view.custom_shortcut_input,
+                shortcut_recorder: &view.shortcut_recorder,
                 application_input: &view.custom_application_input,
                 shortcut_invalid: view.custom_shortcut_invalid,
                 shortcut_mode: view.shortcut_mode,

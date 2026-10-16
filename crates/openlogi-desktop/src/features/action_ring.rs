@@ -20,6 +20,7 @@ use openlogi_ui::action_icons::RING_CANCEL_ICON;
 
 use self::action_icons::action_icon_path;
 use self::editor::action_library;
+use crate::features::shortcut_recorder::ShortcutRecorder;
 use crate::state::{AppState, StateEvent, StateEvents};
 use crate::ui::action::localized_action_label;
 use crate::ui::theme::{self, Palette, Typography as _};
@@ -31,6 +32,7 @@ pub struct ActionRingPanel {
     selected_slot: ActionRingSlot,
     application_input: Option<Entity<InputState>>,
     shortcut_input: Option<Entity<InputState>>,
+    shortcut_recorder: Option<Entity<ShortcutRecorder>>,
     library_scroll: ScrollHandle,
     #[expect(dead_code, reason = "held to keep the AppState subscription alive")]
     state_obs: Subscription,
@@ -46,6 +48,7 @@ impl ActionRingPanel {
             selected_slot: ActionRingSlot::Top,
             application_input: None,
             shortcut_input: None,
+            shortcut_recorder: None,
             library_scroll: ScrollHandle::new(),
             state_obs,
         }
@@ -75,6 +78,10 @@ impl Render for ActionRingPanel {
             window,
             cx,
         );
+        let shortcut_recorder = self
+            .shortcut_recorder
+            .get_or_insert_with(|| cx.new(|cx| ShortcutRecorder::new("ring", shortcut_input, cx)))
+            .clone();
         let view = cx.entity();
 
         v_flex()
@@ -108,7 +115,7 @@ impl Render for ActionRingPanel {
                         self.selected_slot,
                         layout.slots.get(&self.selected_slot),
                         &application_input,
-                        &shortcut_input,
+                        &shortcut_recorder,
                         &self.library_scroll,
                         pal,
                     )),

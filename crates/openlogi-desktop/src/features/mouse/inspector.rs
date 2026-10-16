@@ -21,6 +21,7 @@ use crate::features::binding_editor::{
     GESTURE_BUTTON_ICON, PickFn, action_icon_path, action_rows_matching, editor_section,
     gesture_direction_icon,
 };
+use crate::features::shortcut_recorder::ShortcutRecorder;
 use crate::state::AppState;
 use crate::ui::action::localized_action_label;
 use crate::ui::components::{MenuRow, Toggle, control_button, control_input, toggle_row};
@@ -48,7 +49,7 @@ pub(super) struct BindingInspectorData<'a> {
 pub(super) struct ActionPickerContext<'a> {
     pub open: bool,
     pub search: &'a Entity<InputState>,
-    pub shortcut_input: &'a Entity<InputState>,
+    pub shortcut_recorder: &'a Entity<ShortcutRecorder>,
     pub application_input: &'a Entity<InputState>,
     pub shortcut_invalid: bool,
     pub shortcut_mode: ShortcutMode,
@@ -769,7 +770,7 @@ fn action_library(
         .pt_1()
         .child(custom_shortcut_editor(
             id_prefix,
-            picker.shortcut_input,
+            picker.shortcut_recorder,
             picker.shortcut_invalid,
             picker.shortcut_mode,
             picker.view,
@@ -807,14 +808,14 @@ fn action_library(
 /// action is reachable from the plain per-button picker, not just the ring.
 fn custom_shortcut_editor(
     id_prefix: &'static str,
-    input: &Entity<InputState>,
+    recorder: &Entity<ShortcutRecorder>,
     invalid: bool,
     mode: ShortcutMode,
     view: &Entity<MouseModelView>,
     on_pick: &PickFn,
     pal: Palette,
 ) -> impl IntoElement {
-    let submit_input = input.clone();
+    let submit_recorder = recorder.clone();
     let on_pick = on_pick.clone();
     let mode_button = |option: ShortcutMode| {
         let (id, label) = match option {
@@ -841,31 +842,27 @@ fn custom_shortcut_editor(
         .child(editor_section(tr!("action_ring.custom_shortcut"), pal))
         .child(h_flex().gap_2().child(tap_button).child(hold_button))
         .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .debug_selector(move || format!("{id_prefix}-custom-shortcut-input"))
-                        .child(control_input(input).cleanable(true)),
-                )
-                .child(
-                    Button::new(format!("{id_prefix}-custom-shortcut-add"))
-                        .debug_selector(move || format!("{id_prefix}-custom-shortcut-add"))
-                        .compact()
-                        .label(tr!("common.add"))
-                        .on_click(move |_, window, cx| {
-                            let shortcut = submit_input.read(cx).value().to_string();
-                            match shortcut.parse::<openlogi_core::binding::KeyCombo>() {
-                                Ok(combo) => (on_pick)(mode.action(combo), window, cx),
-                                Err(_) => view.update(cx, |view, cx| {
-                                    view.custom_shortcut_invalid = true;
-                                    cx.notify();
-                                }),
-                            }
-                        }),
-                ),
+            h_flex().gap_2().child(recorder.clone()).child(
+                Button::new(format!("{id_prefix}-custom-shortcut-add"))
+                    .debug_selector(move || format!("{id_prefix}-custom-shortcut-add"))
+                    .compact()
+                    .label(tr!("common.add"))
+                    .on_click(move |_, window, cx| {
+                        let shortcut = submit_recorder
+                            .read(cx)
+                            .input()
+                            .read(cx)
+                            .value()
+                            .to_string();
+                        match shortcut.parse::<openlogi_core::binding::KeyCombo>() {
+                            Ok(combo) => (on_pick)(mode.action(combo), window, cx),
+                            Err(_) => view.update(cx, |view, cx| {
+                                view.custom_shortcut_invalid = true;
+                                cx.notify();
+                            }),
+                        }
+                    }),
+            ),
         )
         .when(invalid, |editor| {
             editor.child(

@@ -26,6 +26,7 @@ use super::inspector::{
 use super::leader_lines::{Geometry as LeaderGeometry, Label, paint as paint_leader_lines};
 use crate::app::{glow_canvas, keyboard_glow};
 use crate::features::profiles::{friendly_app_name, profile_canvas_status};
+use crate::features::shortcut_recorder::ShortcutRecorder;
 use crate::services::assets::{GlowGeometry, ResolvedAsset};
 use crate::state::{AppState, DeviceKey, DeviceRecord, StateEvent};
 use crate::ui::theme::{self, ACCENT_BLUE};
@@ -143,6 +144,7 @@ pub struct MouseModelView {
     action_picker_open: bool,
     action_search: Entity<InputState>,
     pub(super) custom_shortcut_input: Entity<InputState>,
+    shortcut_recorder: Entity<ShortcutRecorder>,
     pub(super) custom_application_input: Entity<InputState>,
     /// Whether the last "Add" attempt on the corresponding custom editor
     /// failed to parse, so its caption can show an inline error.
@@ -167,6 +169,10 @@ impl MouseModelView {
             InputState::new(window, cx)
                 .placeholder(tr!("action_ring.shortcut_e_g_cmd_plus_shift_plus_p"))
         });
+        let shortcut_recorder = {
+            let input = custom_shortcut_input.clone();
+            cx.new(|cx| ShortcutRecorder::new("inspector-action", input, cx))
+        };
         cx.subscribe(&custom_shortcut_input, |view, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 view.custom_shortcut_invalid = false;
@@ -205,6 +211,7 @@ impl MouseModelView {
             action_picker_open: false,
             action_search,
             custom_shortcut_input,
+            shortcut_recorder,
             custom_application_input,
             custom_shortcut_invalid: false,
             shortcut_mode: ShortcutMode::Tap,
@@ -410,7 +417,7 @@ impl Render for MouseModelView {
             ActionPickerContext {
                 open: self.action_picker_open,
                 search: &self.action_search,
-                shortcut_input: &self.custom_shortcut_input,
+                shortcut_recorder: &self.shortcut_recorder,
                 application_input: &self.custom_application_input,
                 shortcut_invalid: self.custom_shortcut_invalid,
                 shortcut_mode: self.shortcut_mode,
